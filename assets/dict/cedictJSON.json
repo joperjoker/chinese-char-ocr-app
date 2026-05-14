@@ -1,0 +1,90 @@
+[
+  {
+    "simplified": "你好",
+    "pinyinRead": "nǐ hǎo",
+    "pinyinType": "ni3 hao3",
+    "definition": [
+      "a greeting",
+      "hello"
+    ]
+  },
+  {
+    "simplified": "谢谢",
+    "pinyinRead": "xiè xie",
+    "pinyinType": "xie4 xie4",
+    "definition": [
+      "thank you",
+      "thanks"
+    ]
+  },
+  {
+    "simplified": "中国",
+    "pinyinRead": "zhōng guó",
+    "pinyinType": "zhong1 guo2",
+    "definition": [
+      "China",
+      "the People's Republic of China"
+    ]
+  },
+  {
+    "simplified": "爱",
+    "pinyinRead": "ài",
+    "pinyinType": "ai4",
+    "definition": [
+      "love",
+      "to love"
+    ]
+  },
+  {
+    "simplified": "猫",
+    "pinyinRead": "māo",
+    "pinyinType": "mao1",
+    "definition": [
+      "cat",
+      "feline"
+    ]
+  },
+  {
+    "simplified": "狗",
+    "pinyinRead": "gǒu",
+    "pinyinType": "gou3",
+    "definition": [
+      "dog",
+      "canine"
+    ]
+  },
+  {
+    "simplified": "花",
+    "pinyinRead": "huā",
+    "pinyinType": "hua1",
+    "definition": [
+      "flower",
+      "bloom"
+    ]
+  },
+  {
+    "simplified": "水",
+    "pinyinRead": "shuǐ",
+    "pinyinType": "shui3",
+    "definition": [
+      "water"
+    ]
+  },
+  {
+    "simplified": "火",
+    "pinyinRead": "huǒ",
+    "pinyinType": "huo3",
+    "definition": [
+      "fire"
+    ]
+  },
+  {
+    "simplified": "山",
+    "pinyinRead": "shān",
+    "pinyinType": "shan1",
+    "definition": [
+      "mountain",
+      "hill"
+    ]
+  }
+]
