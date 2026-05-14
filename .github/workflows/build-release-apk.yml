@@ -1,0 +1,92 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore launcher icons
+        run: |
+          mkdir -p android/app/src/main/res/mipmap-mdpi
+          mkdir -p android/app/src/main/res/mipmap-hdpi
+          mkdir -p android/app/src/main/res/mipmap-xhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          cat > /tmp/icons.b64 <<'EOF'
+          mdpi:iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OMQ0AAAgDsAmZfwvYwwXhaFIBzbSvREhISEhISEhISEhISEhISEhISEhISEhISEjozgJoLGd5I+tjZwAAAABJRU5ErkJggg==
+          hdpi:iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAIAAADajyQQAAAAWklEQVR42u3PAQ0AAAgDoAd5/wrWM4eOjQJk2pciJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJnbVAk8S6M+YMxyfAAAAAElFTkSuQmCC
+          xhdpi:iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAjklEQVR42u3QMQ0AAAgDsAmZfwvYwwEnV5MqaKblEAWCBAkSJEiQIEEIEiRIkCBBggQhSJAgQYIECRKEIEGCBAkSJEiQIAQJEiRIkCBBghAkSJAgQYIECUKQIEGCBAkSJEgQggQJEiRIkCBBCBIkSJAgQYIEIUiQIEGCBAkSJAhBggQJEiRIkCAECRL0ZwE2Cp3woXstTQAAAABJRU5ErkJggg==
+          xxhdpi:iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAIAAABoJHXvAAAA5klEQVR42u3RAQ0AAAjDsAu5fwvYQwehyRSsmVaHigXABEzAgAmYgAETMAEDJmACBkzABAyYgAkYMAETMGACJmDABEzAgLkATMAEDJiACRgwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAEDJiACZiAARMwAQMmYAIGTMAEDJiACRgwARMwYAImYMAETMCACZiAARMwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAEDJiACRgwARMwYAImYAIGTMAEDJiACRgwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAE7HsL84ijZlrzLPYAAAAASUVORK5CYII=
+          xxxhdpi:iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAIAAADdvvtQAAABY0lEQVR42u3SQQ0AAAgDsQmZfwvYwwLh3aQKLpdp4S0SYCAMhIEwEBgIA2EgDAQGwkAYCAOBgTAQBsJAYCAMhIEwEAYCA2EgDISBwEAYCANhIDAQBsJAGAgMhIEwEAbCQGAgDISBMBAGAgNhIAyEgcBAGAgDYSAwEAbCQBgIDISBMBAGwkBgIAyEgTAQGAgDYSAMBAbCQBgIA4GBMBAGwkAYCAyEgTAQBgIDYSAMhIHAQBgIA2EgMBAGwkAYCAyEgTAQBsJAYCAMhIEwEBgIA2EgDAQGwkAYCAOBgTAQBsJAGAgMhIEwEAYCA2EgDISBwEAYCANhIDAQBsJAGAgDqYCBMBAGwkBgIAyEgTAQGAgDYSAMBAbCQBgIA4GBMBAGwkAYCAyEgTAQBgIDYSAMhIHAQBgIA2EgMBAGwkAYCAOBgTAQBsJAcLW3hXfb/Cruba4AAAAASUVORK5CYII=
+          EOF
+          while IFS=: read -r density b64; do
+            echo "$b64" | base64 -d > "android/app/src/main/res/mipmap-${density}/ic_launcher.png"
+          done < /tmp/icons.b64
+          ls -la android/app/src/main/res/mipmap-*/ic_launcher.png
+
+      - name: Download CEDICT dictionary
+        run: |
+          mkdir -p assets/dict
+          if [ ! -f assets/dict/cedictJSON.json ]; then
+            echo "Downloading CEDICT dictionary from rawmarshmellows/chinese-pinyin-JSON..."
+            curl -fL \
+              "https://raw.githubusercontent.com/rawmarshmellows/chinese-pinyin-JSON/master/cedictJSON.json" \
+              -o assets/dict/cedictJSON.json
+            echo "Downloaded $(du -sh assets/dict/cedictJSON.json | cut -f1) dictionary."
+          else
+            echo "Dictionary already present, skipping download."
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 90
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Release v1.0.${{ github.run_number }}
+          body: |
+            Chinese Character OCR App — release APK built from commit ${{ github.sha }}.
+
+            This app uses ML Kit for real-time Chinese character recognition
+            and provides Hanyu Pinyin via a local CEDICT dictionary lookup.
+
+            Download `app-release.apk` below to install on an Android device.
+          files: build/app/outputs/flutter-apk/app-release.apk
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
