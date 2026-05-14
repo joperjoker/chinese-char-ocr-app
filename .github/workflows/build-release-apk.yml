@@ -16,24 +16,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Restore launcher icons
+      - name: Generate launcher icons
         run: |
-          mkdir -p android/app/src/main/res/mipmap-mdpi
-          mkdir -p android/app/src/main/res/mipmap-hdpi
-          mkdir -p android/app/src/main/res/mipmap-xhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-          cat > /tmp/icons.b64 <<'EOF'
-          mdpi:iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OMQ0AAAgDsAmZfwvYwwXhaFIBzbSvREhISEhISEhISEhISEhISEhISEhISEhISEjozgJoLGd5I+tjZwAAAABJRU5ErkJggg==
-          hdpi:iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAIAAADajyQQAAAAWklEQVR42u3PAQ0AAAgDoAd5/wrWM4eOjQJk2pciJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJnbVAk8S6M+YMxyfAAAAAElFTkSuQmCC
-          xhdpi:iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAjklEQVR42u3QMQ0AAAgDsAmZfwvYwwEnV5MqaKblEAWCBAkSJEiQIEEIEiRIkCBBggQhSJAgQYIECRKEIEGCBAkSJEiQIAQJEiRIkCBBghAkSJAgQYIECUKQIEGCBAkSJEgQggQJEiRIkCBBCBIkSJAgQYIEIUiQIEGCBAkSJAhBggQJEiRIkCAECRL0ZwE2Cp3woXstTQAAAABJRU5ErkJggg==
-          xxhdpi:iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAIAAABoJHXvAAAA5klEQVR42u3RAQ0AAAjDsAu5fwvYQwehyRSsmVaHigXABEzAgAmYgAETMAEDJmACBkzABAyYgAkYMAETMGACJmDABEzAgLkATMAEDJiACRgwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAEDJiACZiAARMwAQMmYAIGTMAEDJiACRgwARMwYAImYMAETMCACZiAARMwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAEDJiACRgwARMwYAImYAIGTMAEDJiACRgwARMwYAImYMAETMCACZiAARMwAQMmYAIGTMAE7HsL84ijZlrzLPYAAAAASUVORK5CYII=
-          xxxhdpi:iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAIAAADdvvtQAAABY0lEQVR42u3SQQ0AAAgDsQmZfwvYwwLh3aQKLpdp4S0SYCAMhIEwEBgIA2EgDAQGwkAYCAOBgTAQBsJAYCAMhIEwEAYCA2EgDISBwEAYCANhIDAQBsJAGAgMhIEwEAbCQGAgDISBMBAGAgNhIAyEgcBAGAgDYSAwEAbCQBgIDISBMBAGwkBgIAyEgTAQGAgDYSAMBAbCQBgIA4GBMBAGwkAYCAyEgTAQBgIDYSAMhIHAQBgIA2EgMBAGwkAYCAyEgTAQBsJAYCAMhIEwEBgIA2EgDAQGwkAYCAOBgTAQBsJAGAgMhIEwEAYCA2EgDISBwEAYCANhIDAQBsJAGAgDqYCBMBAGwkBgIAyEgTAQGAgDYSAMBAbCQBgIA4GBMBAGwkAYCAyEgTAQBgIDYSAMhIHAQBgIA2EgMBAGwkAYCAOBgTAQBsJAcLW3hXfb/Cruba4AAAAASUVORK5CYII=
-          EOF
-          while IFS=: read -r density b64; do
-            echo "$b64" | base64 -d > "android/app/src/main/res/mipmap-${density}/ic_launcher.png"
-          done < /tmp/icons.b64
+          # Generate valid solid-colour PNGs with ImageMagick (preinstalled on
+          # ubuntu-latest). Avoids checking 5 binary blobs into the repo and
+          # avoids the hand-crafted base64 that aapt2 rejected previously.
+          set -e
+          for spec in 48:mdpi 72:hdpi 96:xhdpi 144:xxhdpi 192:xxxhdpi; do
+            size="${spec%%:*}"
+            density="${spec##*:}"
+            dir="android/app/src/main/res/mipmap-${density}"
+            mkdir -p "$dir"
+            convert -size "${size}x${size}" xc:'#B71C1C' "$dir/ic_launcher.png"
+          done
           ls -la android/app/src/main/res/mipmap-*/ic_launcher.png
+          file android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
       - name: Download CEDICT dictionary
         run: |

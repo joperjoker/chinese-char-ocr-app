@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace "com.example.chinese_char_ocr_app"
-    compileSdk 35
+    compileSdk 36
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -24,7 +24,7 @@ android {
     defaultConfig {
         applicationId "com.example.chinese_char_ocr_app"
         minSdkVersion flutter.minSdkVersion
-        targetSdk 35
+        targetSdk 36
         versionCode 1
         versionName "1.0"
     }
