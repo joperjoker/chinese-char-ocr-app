@@ -24,7 +24,6 @@ jobs:
       uses: subosito/flutter-action@v2
       with:
         channel: 'stable'
-        flutter-version: '3.41.9'
         cache: true
 
     - name: Restore pub cache
@@ -44,7 +43,7 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: chinese-ocr-app-apk
+        name: app-release-apk
         path: build/app/outputs/flutter-apk/app-release.apk
 
     - name: Create Release
@@ -52,10 +51,10 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: build/app/outputs/flutter-apk/app-release.apk
-        name: Chinese Character OCR App v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
         tag_name: v1.0.${{ github.run_number }}
         body: |
-          Chinese Character OCR App — release APK built from commit ${{ github.sha }}.
+          Release APK built from commit ${{ github.sha }}.
 
           Download `app-release.apk` below to install on an Android device.
       env:
