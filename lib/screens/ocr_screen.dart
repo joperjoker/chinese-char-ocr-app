@@ -69,6 +69,16 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive) {
       _stopStream();
       controller.dispose();
+      // Null the reference immediately so no rebuild can access the disposed
+      // controller before the camera re-initialises on resume.
+      if (mounted) {
+        setState(() {
+          _camera = null;
+          _cameraAvailable = false;
+          _initialising = true;
+          _initMessage = 'Starting camera…';
+        });
+      }
     } else if (state == AppLifecycleState.resumed) {
       _initCamera();
     }
@@ -77,7 +87,19 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
   // ── Initialisation ────────────────────────────────────────────────────────
 
   Future<void> _init() async {
-    await _dict.load();
+    if (mounted) setState(() => _initMessage = 'Loading dictionary…');
+    try {
+      await _dict.load();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _initialising = false;
+          _initMessage = 'Failed to load dictionary asset.';
+        });
+      }
+      return;
+    }
+    if (mounted) setState(() => _initMessage = 'Starting camera…');
     await _initCamera();
   }
 
@@ -558,6 +580,13 @@ class _ScanIndicatorState extends State<_ScanIndicator>
     parent: _controller,
     curve: Curves.easeInOut,
   );
+
+  @override
+  void didUpdateWidget(_ScanIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active == oldWidget.active) return;
+    widget.active ? _controller.repeat(reverse: true) : _controller.stop();
+  }
 
   @override
   void dispose() {
