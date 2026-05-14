@@ -17,20 +17,56 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Generate launcher icons
+        shell: python
         run: |
-          # Generate valid solid-colour PNGs with ImageMagick (preinstalled on
-          # ubuntu-latest). Avoids checking 5 binary blobs into the repo and
-          # avoids the hand-crafted base64 that aapt2 rejected previously.
-          set -e
-          for spec in 48:mdpi 72:hdpi 96:xhdpi 144:xxhdpi 192:xxxhdpi; do
-            size="${spec%%:*}"
-            density="${spec##*:}"
-            dir="android/app/src/main/res/mipmap-${density}"
-            mkdir -p "$dir"
-            convert -size "${size}x${size}" xc:'#B71C1C' "$dir/ic_launcher.png"
-          done
-          ls -la android/app/src/main/res/mipmap-*/ic_launcher.png
-          file android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            # Write valid solid-colour PNGs at the five Android mipmap
+            # densities. Python's stdlib is the most portable choice across
+            # GitHub-hosted runner image versions (no apt install needed,
+            # no ImageMagick dependency).
+            import os
+            import struct
+            import zlib
+
+            # Material Red 900 — solid square icon
+            R, G, B = 0xB7, 0x1C, 0x1C
+
+            DENSITIES = [
+                (48, "mdpi"),
+                (72, "hdpi"),
+                (96, "xhdpi"),
+                (144, "xxhdpi"),
+                (192, "xxxhdpi"),
+            ]
+
+            def chunk(tag: bytes, data: bytes) -> bytes:
+                return (
+                    struct.pack(">I", len(data))
+                    + tag
+                    + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+                )
+
+            def make_png(size: int) -> bytes:
+                # IHDR — 8-bit RGB, no filter / interlace
+                ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+                # Each row: 1 filter byte (0 = None) + size * RGB triples
+                row = b"\x00" + bytes([R, G, B]) * size
+                raw = row * size
+                idat = zlib.compress(raw, 9)
+                return (
+                    b"\x89PNG\r\n\x1a\n"
+                    + chunk(b"IHDR", ihdr)
+                    + chunk(b"IDAT", idat)
+                    + chunk(b"IEND", b"")
+                )
+
+            for size, density in DENSITIES:
+                directory = f"android/app/src/main/res/mipmap-{density}"
+                os.makedirs(directory, exist_ok=True)
+                path = f"{directory}/ic_launcher.png"
+                with open(path, "wb") as fh:
+                    fh.write(make_png(size))
+                print(f"wrote {path} ({size}x{size}, {os.path.getsize(path)} bytes)")
 
       - name: Download CEDICT dictionary
         run: |
