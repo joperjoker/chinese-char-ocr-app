@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:lpinyin/lpinyin.dart';
+import '../models/radical_info.dart';
 import '../services/dictionary_service.dart';
+import '../services/radical_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main screen
@@ -37,8 +39,9 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
     script: TextRecognitionScript.chinese,
   );
 
-  // ── Dictionary ────────────────────────────────────────────────────────────
+  // ── Services ──────────────────────────────────────────────────────────────
   final DictionaryService _dict = DictionaryService();
+  final RadicalService _radicals = RadicalService();
 
   // ── UI state ──────────────────────────────────────────────────────────────
   bool _initialising = true;
@@ -99,6 +102,14 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
       }
       return;
     }
+
+    if (mounted) setState(() => _initMessage = 'Loading radicals…');
+    try {
+      await _radicals.load();
+    } catch (_) {
+      // Radical data is supplementary — the app continues without decomposition.
+    }
+
     if (mounted) setState(() => _initMessage = 'Starting camera…');
     await _initCamera();
   }
@@ -251,10 +262,15 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
           pinyin = '';
         }
 
+        // Radical decomposition is only meaningful for single CJK characters.
+        final RadicalInfo? radicals =
+            text.runes.length == 1 ? _radicals.decompose(text) : null;
+
         results.add(_OcrLine(
           text: text,
           pinyin: pinyin,
           analysis: analysis,
+          radicals: radicals,
           imageBoundingBox: line.boundingBox,
         ));
       }
@@ -390,9 +406,8 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
 
   // ── Results overlay (on-camera positioned labels) ─────────────────────────
 
-  /// Builds floating character + pinyin labels placed at the bounding-box
-  /// location of each ML Kit result that the dictionary confirmed as a real
-  /// Simplified Chinese entry.
+  /// Builds floating labels placed at each ML Kit bounding box that the
+  /// dictionary confirmed as a real Simplified Chinese entry.
   Widget _buildResultsOverlay() {
     final validResults = _results.where((l) => l.analysis.isValid).toList();
     if (validResults.isEmpty || _lastImageSize == Size.zero) {
@@ -425,9 +440,6 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
   ) {
     final screenRect = mapper.toScreenRect(line.imageBoundingBox);
 
-    // When there is no bounding box or it falls entirely outside the visible
-    // area, return an invisible placeholder rather than nothing — keeping the
-    // list length consistent avoids widget-tree reconciliation issues.
     if (screenRect == null ||
         screenRect.right < 0 ||
         screenRect.left > screenSize.width ||
@@ -436,16 +448,22 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
       return const SizedBox.shrink();
     }
 
-    // Place the label just above the detected text region; clamp to the
-    // top of the screen so it never slides out of view.
-    const labelHeight = 72.0;
-    final top = (screenRect.top - labelHeight - 6).clamp(0.0, screenSize.height - labelHeight);
+    // Allocate more vertical space when a radical row is shown so the label
+    // doesn't clip above the screen edge.
+    final hasRadicals = line.radicals?.hasDecomposition ?? false;
+    final labelHeight = hasRadicals ? 104.0 : 72.0;
+    final top = (screenRect.top - labelHeight - 6)
+        .clamp(0.0, screenSize.height - labelHeight);
     final left = screenRect.left.clamp(0.0, screenSize.width - 10);
 
     return Positioned(
       left: left,
       top: top,
-      child: _ResultLabel(text: line.text, pinyin: line.pinyin),
+      child: _ResultLabel(
+        text: line.text,
+        pinyin: line.pinyin,
+        radicals: line.radicals,
+      ),
     );
   }
 
@@ -492,7 +510,9 @@ class _OcrScreenState extends State<OcrScreen> with WidgetsBindingObserver {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _ControlButton(
-            icon: _isStreaming ? Icons.pause_circle_outline : Icons.play_circle_outline,
+            icon: _isStreaming
+                ? Icons.pause_circle_outline
+                : Icons.play_circle_outline,
             label: _isStreaming ? 'Pause' : 'Resume',
             onTap: () => _isStreaming ? _stopStream() : _startStream(),
           ),
@@ -535,7 +555,7 @@ class _CornerBracketPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    const arm = 28.0; // length of each bracket arm
+    const arm = 28.0;
     final w = size.width;
     final h = size.height;
 
@@ -669,6 +689,7 @@ class _OcrLine {
     required this.text,
     required this.pinyin,
     required this.analysis,
+    this.radicals,
     this.imageBoundingBox,
   });
 
@@ -676,8 +697,11 @@ class _OcrLine {
   final String pinyin;
   final AnalysisResult analysis;
 
+  /// Left/right radical decomposition — present only for single CJK characters
+  /// that exist in the IDS decomposition table.
+  final RadicalInfo? radicals;
+
   /// Bounding box in raw camera-image coordinate space, as returned by ML Kit.
-  /// Null when ML Kit did not supply position data for this line.
   final Rect? imageBoundingBox;
 }
 
@@ -705,17 +729,10 @@ class _CoordinateMapper {
     required this.screenSize,
   });
 
-  /// Dimensions of the raw camera image (landscape on most Android devices).
   final Size imageSize;
-
-  /// Camera sensor orientation in degrees (0 / 90 / 180 / 270).
   final int sensorOrientation;
-
-  /// Logical pixel dimensions of the screen / overlay container.
   final Size screenSize;
 
-  /// Converts an ML Kit [imageRect] (in raw image pixel coordinates) to a
-  /// [Rect] in screen logical pixels. Returns null when [imageRect] is null.
   Rect? toScreenRect(Rect? imageRect) {
     if (imageRect == null) return null;
 
@@ -724,20 +741,10 @@ class _CoordinateMapper {
 
     // ── Step 1: rotate image coordinates to portrait display coordinates ────
     //
-    // For each sensorOrientation θ, the sensor captures a landscape frame that
-    // is rotated θ° CCW from the device's upright (portrait) position.
-    // Applying the inverse rotation (θ° CW) maps image coordinates to portrait.
-    //
-    // Derived from standard 2-D rotation + translation to keep coords positive:
-    //
     //   θ = 90  → portrait_x = imgH − imgY,  portrait_y = imgX
     //   θ = 270 → portrait_x = imgY,          portrait_y = imgW − imgX
     //   θ = 180 → portrait_x = imgW − imgX,   portrait_y = imgH − imgY
     //   θ = 0   → no change
-    //
-    // Portrait canvas dimensions after rotation:
-    //   90 / 270 → (pW = imgH, pH = imgW)
-    //   0  / 180 → (pW = imgW, pH = imgH)
 
     final Rect portrait;
     final double pW, pH;
@@ -747,28 +754,28 @@ class _CoordinateMapper {
         pW = imgH;
         pH = imgW;
         portrait = Rect.fromLTRB(
-          imgH - imageRect.bottom, // left  = imgH − bbox.bottom
-          imageRect.left,           // top   = bbox.left
-          imgH - imageRect.top,     // right = imgH − bbox.top
-          imageRect.right,          // bottom= bbox.right
+          imgH - imageRect.bottom,
+          imageRect.left,
+          imgH - imageRect.top,
+          imageRect.right,
         );
       case 270:
         pW = imgH;
         pH = imgW;
         portrait = Rect.fromLTRB(
-          imageRect.top,            // left  = bbox.top
-          imgW - imageRect.right,   // top   = imgW − bbox.right
-          imageRect.bottom,         // right = bbox.bottom
-          imgW - imageRect.left,    // bottom= imgW − bbox.left
+          imageRect.top,
+          imgW - imageRect.right,
+          imageRect.bottom,
+          imgW - imageRect.left,
         );
       case 180:
         pW = imgW;
         pH = imgH;
         portrait = Rect.fromLTRB(
-          imgW - imageRect.right,   // left  = imgW − bbox.right
-          imgH - imageRect.bottom,  // top   = imgH − bbox.bottom
-          imgW - imageRect.left,    // right = imgW − bbox.left
-          imgH - imageRect.top,     // bottom= imgH − bbox.top
+          imgW - imageRect.right,
+          imgH - imageRect.bottom,
+          imgW - imageRect.left,
+          imgH - imageRect.top,
         );
       default: // 0°
         pW = imgW;
@@ -778,13 +785,8 @@ class _CoordinateMapper {
 
     // ── Step 2: apply the FittedBox(cover) scale + crop offset ──────────────
     //
-    // The preview SizedBox has logical dimensions (pW, pH). FittedBox scales
-    // it uniformly so its smaller dimension fills the screen edge-to-edge
-    // (cover behaviour). The larger dimension overflows and is centre-cropped.
-    //
-    //   scale   = max(screenW / pW, screenH / pH)
-    //   offset  = ((screenW − pW·scale) / 2,  (screenH − pH·scale) / 2)
-    //             (negative when cropped on that axis)
+    //   scale  = max(screenW / pW, screenH / pH)
+    //   offset = ((screenW − pW·scale) / 2,  (screenH − pH·scale) / 2)
 
     final double scale =
         math.max(screenSize.width / pW, screenSize.height / pH);
@@ -801,47 +803,119 @@ class _CoordinateMapper {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Result label — character + pinyin card rendered on the camera feed
+// Result label — radical decomposition + character + pinyin card
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ResultLabel extends StatelessWidget {
-  const _ResultLabel({required this.text, required this.pinyin});
+  const _ResultLabel({
+    required this.text,
+    required this.pinyin,
+    this.radicals,
+  });
 
   final String text;
   final String pinyin;
+  final RadicalInfo? radicals;
 
   @override
   Widget build(BuildContext context) {
+    final hasRadicals = radicals?.hasDecomposition ?? false;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.black.withAlpha(179),
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.black.withAlpha(192),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white24, width: 0.8),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // ── Radical row ─────────────────────────────────────────────────────
+          if (hasRadicals) ...[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RadicalChip(label: radicals!.left!),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    '＋',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                ),
+                _RadicalChip(label: radicals!.right!),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    '→',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+          ],
+
+          // ── Recognised character ───────────────────────────────────────────
           Text(
             text,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              height: 1.15,
+              fontSize: 30,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
             ),
           ),
+
+          // ── Hanyu Pinyin ──────────────────────────────────────────────────
           if (pinyin.isNotEmpty)
-            Text(
-              pinyin,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-                letterSpacing: 0.3,
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                pinyin,
+                style: const TextStyle(
+                  color: Colors.amber,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.5,
+                ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small chip showing a single radical character.
+class _RadicalChip extends StatelessWidget {
+  const _RadicalChip({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white12,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
       ),
     );
   }

@@ -81,6 +81,57 @@ jobs:
             echo "Dictionary already present, skipping download."
           fi
 
+      - name: Generate radical decomposition data
+        shell: python
+        run: |
+            # Download IDS (Ideographic Description Sequences) data from cjkvi/cjkvi-ids
+            # and emit a compact JSON mapping each character that has a simple left-right
+            # composition (⧰) to its two components.  Characters whose components are
+            # complex sub-sequences (not single CJK codepoints) are excluded so that the
+            # Dart side needs no IDS parsing logic.
+            import os, json, urllib.request
+
+            os.makedirs('assets/radicals', exist_ok=True)
+            out = 'assets/radicals/decomp.json'
+
+            LR_OP = '⿰'  # ⧰ — left-right IDS composition operator
+
+            def is_cjk(c):
+                cp = ord(c)
+                return (
+                    0x4E00 <= cp <= 0x9FFF    # CJK Unified Ideographs
+                    or 0x3400 <= cp <= 0x4DBF   # Extension A
+                    or 0xF900 <= cp <= 0xFAFF   # CJK Compatibility
+                    or 0x20000 <= cp <= 0x2A6DF  # Extension B
+                )
+
+            result = {}
+            try:
+                url = 'https://raw.githubusercontent.com/cjkvi/cjkvi-ids/master/ids.txt'
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    raw = r.read().decode('utf-8')
+
+                for line in raw.splitlines():
+                    if not line or line.startswith('#') or '\t' not in line:
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) < 3:
+                        continue
+                    char  = parts[1]
+                    ids   = parts[2]
+                    # Accept only simple ⧰ L R where L and R are each a single CJK char
+                    if len(ids) == 3 and ids[0] == LR_OP and is_cjk(ids[1]) and is_cjk(ids[2]):
+                        result[char] = {'l': ids[1], 'r': ids[2]}
+
+                print(f'Generated {len(result)} left-right decompositions.')
+            except Exception as e:
+                print(f'Warning: IDS download failed ({e}); writing empty decomp.json.')
+
+            with open(out, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
+            print(f'Wrote {os.path.getsize(out)} bytes → {out}')
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -115,8 +166,9 @@ jobs:
           body: |
             Chinese Character OCR App — release APK built from commit ${{ github.sha }}.
 
-            This app uses ML Kit for real-time Chinese character recognition
-            and provides Hanyu Pinyin via a local CEDICT dictionary lookup.
+            This app uses ML Kit for real-time Chinese character recognition,
+            shows left/right radical decomposition, and provides Hanyu Pinyin
+            via a local CEDICT dictionary lookup.
 
             Download `app-release.apk` below to install on an Android device.
           files: build/app/outputs/flutter-apk/app-release.apk
