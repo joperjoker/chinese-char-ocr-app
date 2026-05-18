@@ -159,14 +159,28 @@ jobs:
         continue-on-error: true
         run: flutter build apk --release --no-pub
 
-      - name: Verify APK was produced
+      - name: Locate and stage APK
+        # Flutter's inotify watcher exception breaks the post-Gradle copy step,
+        # leaving the APK at Gradle's native output path instead of Flutter's.
+        # This step checks both locations and copies to the Flutter path so the
+        # upload and release steps below work without modification.
         run: |
-          APK="build/app/outputs/flutter-apk/app-release.apk"
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK not found at $APK — Gradle build genuinely failed."
-            exit 1
+          FLUTTER_APK="build/app/outputs/flutter-apk/app-release.apk"
+          if [ -f "$FLUTTER_APK" ]; then
+            echo "APK at Flutter path ($(du -sh "$FLUTTER_APK" | cut -f1)): $FLUTTER_APK"
+          else
+            GRADLE_APK=$(find android/app/build/outputs/apk -name "app-release.apk" 2>/dev/null | head -1)
+            if [ -n "$GRADLE_APK" ]; then
+              echo "APK found at Gradle path: $GRADLE_APK ($(du -sh "$GRADLE_APK" | cut -f1))"
+              mkdir -p build/app/outputs/flutter-apk
+              cp "$GRADLE_APK" "$FLUTTER_APK"
+              echo "Copied to Flutter path: $FLUTTER_APK"
+            else
+              echo "ERROR: APK not found at Flutter path or Gradle path — Gradle genuinely failed."
+              find . -name "*.apk" 2>/dev/null | head -10 || true
+              exit 1
+            fi
           fi
-          echo "APK confirmed ($(du -sh "$APK" | cut -f1)): $APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
