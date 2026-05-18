@@ -183,11 +183,12 @@ jobs:
           fi
 
       - name: Upload APK artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 90
+          retention-days: 1
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
