@@ -86,7 +86,7 @@ jobs:
         run: |
             # Download IDS (Ideographic Description Sequences) data from cjkvi/cjkvi-ids
             # and emit a compact JSON mapping each character that has a simple left-right
-            # composition (⧰) to its two components.  Characters whose components are
+            # composition (⿰) to its two components.  Characters whose components are
             # complex sub-sequences (not single CJK codepoints) are excluded so that the
             # Dart side needs no IDS parsing logic.
             import os, json, urllib.request
@@ -94,15 +94,15 @@ jobs:
             os.makedirs('assets/radicals', exist_ok=True)
             out = 'assets/radicals/decomp.json'
 
-            LR_OP = '⿰'  # ⧰ — left-right IDS composition operator
+            LR_OP = '⿰'  # ⿰ — left-right IDS composition operator
 
             def is_cjk(c):
                 cp = ord(c)
                 return (
-                    0x4E00 <= cp <= 0x9FFF    # CJK Unified Ideographs
-                    or 0x3400 <= cp <= 0x4DBF   # Extension A
-                    or 0xF900 <= cp <= 0xFAFF   # CJK Compatibility
-                    or 0x20000 <= cp <= 0x2A6DF  # Extension B
+                    0x4E00 <= cp <= 0x9FFF   # CJK Unified Ideographs
+                    or 0x3400 <= cp <= 0x4DBF  # Extension A
+                    or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility
+                    or 0x20000 <= cp <= 0x2A6DF # Extension B
                 )
 
             result = {}
@@ -120,7 +120,7 @@ jobs:
                         continue
                     char  = parts[1]
                     ids   = parts[2]
-                    # Accept only simple ⧰ L R where L and R are each a single CJK char
+                    # Accept only simple ⿰ L R where L and R are each a single CJK char
                     if len(ids) == 3 and ids[0] == LR_OP and is_cjk(ids[1]) and is_cjk(ids[2]):
                         result[char] = {'l': ids[1], 'r': ids[2]}
 
@@ -149,7 +149,24 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
+        # continue-on-error absorbs the known false-positive "Already watching
+        # path: android" inotify exception that Flutter throws when the build
+        # system registers a duplicate directory watcher.  Gradle still runs to
+        # completion (as evidenced by 500 s+ runtimes in previous CI logs) and
+        # produces the APK — Flutter just fails to detect it.  The next step
+        # performs an explicit existence check so genuine Gradle failures still
+        # fail the workflow.
+        continue-on-error: true
         run: flutter build apk --release --no-pub
+
+      - name: Verify APK was produced
+        run: |
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found at $APK — Gradle build genuinely failed."
+            exit 1
+          fi
+          echo "APK confirmed ($(du -sh "$APK" | cut -f1)): $APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -166,9 +183,8 @@ jobs:
           body: |
             Chinese Character OCR App — release APK built from commit ${{ github.sha }}.
 
-            This app uses ML Kit for real-time Chinese character recognition,
-            shows left/right radical decomposition, and provides Hanyu Pinyin
-            via a local CEDICT dictionary lookup.
+            This app uses ML Kit for real-time Chinese character recognition
+            and provides Hanyu Pinyin via a local CEDICT dictionary lookup.
 
             Download `app-release.apk` below to install on an Android device.
           files: build/app/outputs/flutter-apk/app-release.apk
