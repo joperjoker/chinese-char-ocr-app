@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import '../services/chinese_definition_service.dart';
+import '../services/crash_breadcrumbs.dart';
 import '../services/dictionary_service.dart';
+import '../services/image_sanitizer.dart';
 import '../services/radical_service.dart';
 import '../services/text_analyzer.dart';
 import 'result_screen.dart';
@@ -45,7 +47,7 @@ class _CaptureScreenState extends State<CaptureScreen>
   bool _capturing = false;
   bool _torchOn = false;
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────────────────────────────
+  // ── Lifecycle ───────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -83,7 +85,7 @@ class _CaptureScreenState extends State<CaptureScreen>
     }
   }
 
-  // ── Initialisation ──────────────────────────────────────────────────────────────────────────────
+  // ── Initialisation ────────────────────────────────────────────────────────────
 
   Future<void> _init() async {
     if (mounted) setState(() => _initMessage = 'Loading dictionary…');
@@ -174,7 +176,7 @@ class _CaptureScreenState extends State<CaptureScreen>
     });
   }
 
-  // ── Capture pipeline ──────────────────────────────────────────────────────────────────────────
+  // ── Capture pipeline ───────────────────────────────────────────────────────────
 
   Future<void> _capture() async {
     final controller = _camera;
@@ -182,23 +184,38 @@ class _CaptureScreenState extends State<CaptureScreen>
 
     setState(() => _capturing = true);
     final stopwatch = Stopwatch()..start();
+    String? sanitisedPath;
+    XFile? shot;
     try {
-      final shot = await controller.takePicture();
+      // Breadcrumbs survive a native crash: the next launch reports the last
+      // step that completed, pinpointing where the process died.
+      await CrashBreadcrumbs.mark('1 shutter tapped (taking photo)');
+      shot = await controller.takePicture();
+
+      await CrashBreadcrumbs.mark('2 photo taken (preparing image)');
+      // Re-encode to a plain bounded-size PNG so ML Kit's native decoder
+      // never sees exotic flagship JPEG variants (e.g. Ultra HDR gain maps).
+      sanitisedPath = await ImageSanitizer.sanitise(shot.path);
+      final ocrPath = sanitisedPath ?? shot.path;
+
+      await CrashBreadcrumbs.mark('3 image prepared (recognising text)');
       final recognised = await _textRecognizer
-          .processImage(InputImage.fromFilePath(shot.path));
+          .processImage(InputImage.fromFilePath(ocrPath));
+
+      await CrashBreadcrumbs.mark('4 text recognised (analysing)');
       stopwatch.stop();
 
-      // Best-effort cleanup of the temporary capture file.
-      File(shot.path).delete().ignore();
-
       final analysis = _analyzer.analyse(recognised.text);
+      await CrashBreadcrumbs.mark('5 analysis done (opening results)');
       if (!mounted) return;
 
       if (analysis.isEmpty) {
+        await CrashBreadcrumbs.clear();
         _showMessage('未识别到中文 — no Chinese characters detected. Try again.');
         return;
       }
 
+      await CrashBreadcrumbs.clear();
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => ResultScreen(
@@ -208,8 +225,12 @@ class _CaptureScreenState extends State<CaptureScreen>
         ),
       );
     } catch (_) {
+      await CrashBreadcrumbs.clear();
       if (mounted) _showMessage('Recognition failed — please try again.');
     } finally {
+      // Best-effort cleanup of temporary image files.
+      if (shot != null) File(shot.path).delete().ignore();
+      if (sanitisedPath != null) File(sanitisedPath).delete().ignore();
       if (mounted) setState(() => _capturing = false);
     }
   }
@@ -238,7 +259,7 @@ class _CaptureScreenState extends State<CaptureScreen>
       );
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -421,9 +442,9 @@ class _CaptureScreenState extends State<CaptureScreen>
   }
 }
 
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Shutter button
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 class _ShutterButton extends StatelessWidget {
   const _ShutterButton({required this.enabled, required this.onTap});
@@ -458,9 +479,9 @@ class _ShutterButton extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Processing overlay shown while recognition is in flight
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 class _ProcessingOverlay extends StatelessWidget {
   const _ProcessingOverlay();
@@ -486,9 +507,9 @@ class _ProcessingOverlay extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // Viewfinder corner-bracket overlay
-// ───────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 class _ViewfinderFrame extends StatelessWidget {
   const _ViewfinderFrame();
