@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'screens/ocr_screen.dart';
+import 'screens/capture_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,10 +26,10 @@ class ChineseCharOcrApp extends StatelessWidget {
       title: 'Chinese Character OCR',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFB71C1C)),
         useMaterial3: true,
       ),
-      home: const OcrScreen(),
+      home: const CaptureScreen(),
     );
   }
 }

@@ -30,4 +30,5 @@ flutter:
 
   assets:
     - assets/dict/cedictJSON.json
+    - assets/dict/chinese_defs.json
     - assets/radicals/decomp.json

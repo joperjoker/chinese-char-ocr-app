@@ -17,8 +17,13 @@ class RadicalService {
   /// Safe to call multiple times; subsequent calls are no-ops.
   Future<void> load() async {
     if (_index != null) return;
-    final raw = await rootBundle.loadString(_assetPath);
-    final map = jsonDecode(raw) as Map<String, dynamic>;
+    loadFromString(await rootBundle.loadString(_assetPath));
+  }
+
+  /// Parses [json] (a {char: {l, r}} object) into the lookup indexes.
+  /// Exposed separately from [load] so tests can inject fixture data.
+  void loadFromString(String json) {
+    final map = jsonDecode(json) as Map<String, dynamic>;
 
     final index = <String, RadicalInfo>{};
     final reverse = <String, String>{};

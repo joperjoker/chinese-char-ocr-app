@@ -63,14 +63,24 @@ class DictionaryService {
   /// Lazily-populated index: simplified text → dictionary entry.
   Map<String, DictEntry>? _index;
 
+  /// Longest dictionary word considered during [segment]. CEDICT words are
+  /// rarely longer than four characters; bounding the search keeps
+  /// segmentation linear.
+  static const _maxWordLength = 4;
+
   /// Loads the CEDICT JSON asset into memory.
   ///
   /// Safe to call multiple times; subsequent calls are no-ops.
   Future<void> load() async {
     if (_index != null) return;
-    final raw = await rootBundle.loadString(_assetPath);
+    loadFromString(await rootBundle.loadString(_assetPath));
+  }
+
+  /// Parses [json] (the CEDICT entry array) into the lookup index.
+  /// Exposed separately from [load] so tests can inject fixture data.
+  void loadFromString(String json) {
     final list =
-        (jsonDecode(raw) as List<dynamic>).cast<Map<String, dynamic>>();
+        (jsonDecode(json) as List<dynamic>).cast<Map<String, dynamic>>();
     _index = {
       for (final entry in list.map(DictEntry.fromJson)) entry.simplified: entry,
     };
@@ -108,6 +118,44 @@ class DictionaryService {
   /// in the ranges used by Simplified Chinese.
   bool containsChineseCharacter(String text) =>
       text.runes.any(_isCjkCodePoint);
+
+  /// Returns only the CJK ideograph characters of [text], in original order.
+  /// Latin letters, digits, punctuation, and whitespace are dropped.
+  String extractChinese(String text) => String.fromCharCodes(
+        text.runes.where(_isCjkCodePoint),
+      );
+
+  /// Greedy longest-match segmentation of [text] against the dictionary.
+  ///
+  /// Starting at each position, the longest dictionary word (up to
+  /// [_maxWordLength] characters) is taken; when no multi-character word
+  /// matches, the single character is emitted on its own. The concatenation
+  /// of the returned segments always equals [text].
+  List<String> segment(String text) {
+    _assertLoaded();
+    final runes = text.runes.toList();
+    final segments = <String>[];
+    var i = 0;
+    while (i < runes.length) {
+      var matched = false;
+      final maxLen =
+          runes.length - i < _maxWordLength ? runes.length - i : _maxWordLength;
+      for (var len = maxLen; len >= 2; len--) {
+        final candidate = String.fromCharCodes(runes.sublist(i, i + len));
+        if (_index!.containsKey(candidate)) {
+          segments.add(candidate);
+          i += len;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        segments.add(String.fromCharCode(runes[i]));
+        i += 1;
+      }
+    }
+    return segments;
+  }
 
   /// Direct entry lookup — returns null when [simplified] is absent.
   ///
