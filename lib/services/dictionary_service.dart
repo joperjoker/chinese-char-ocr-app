@@ -1,6 +1,18 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/dict_entry.dart';
+
+/// Parses the CEDICT entry array into a simplified-text → entry index.
+/// Top-level so [compute] can run it on a background isolate — the asset is
+/// ~19MB and parsing it on the UI thread would freeze the app for seconds.
+Map<String, DictEntry> parseCedictIndex(String json) {
+  final list =
+      (jsonDecode(json) as List<dynamic>).cast<Map<String, dynamic>>();
+  return {
+    for (final entry in list.map(DictEntry.fromJson)) entry.simplified: entry,
+  };
+}
 
 /// Outcome of [DictionaryService.analyseText].
 class AnalysisResult {
@@ -68,22 +80,20 @@ class DictionaryService {
   /// segmentation linear.
   static const _maxWordLength = 4;
 
-  /// Loads the CEDICT JSON asset into memory.
+  /// Loads the CEDICT JSON asset into memory, parsing on a background
+  /// isolate so the UI thread stays responsive.
   ///
   /// Safe to call multiple times; subsequent calls are no-ops.
   Future<void> load() async {
     if (_index != null) return;
-    loadFromString(await rootBundle.loadString(_assetPath));
+    final raw = await rootBundle.loadString(_assetPath);
+    _index = await compute(parseCedictIndex, raw);
   }
 
   /// Parses [json] (the CEDICT entry array) into the lookup index.
   /// Exposed separately from [load] so tests can inject fixture data.
   void loadFromString(String json) {
-    final list =
-        (jsonDecode(json) as List<dynamic>).cast<Map<String, dynamic>>();
-    _index = {
-      for (final entry in list.map(DictEntry.fromJson)) entry.simplified: entry,
-    };
+    _index = parseCedictIndex(json);
   }
 
   // ---------------------------------------------------------------------------

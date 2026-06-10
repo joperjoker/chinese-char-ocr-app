@@ -1,20 +1,40 @@
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'screens/capture_screen.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // Global guards: an unexpected Dart exception anywhere in the app is
+  // logged instead of being allowed to take the process down.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock to portrait so the camera sensor-rotation calculations are stable.
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      debugPrint('Uncaught platform error: $error\n$stack');
+      return true;
+    };
 
-  // Render behind the status bar and navigation bar for a true full-screen
-  // camera preview.
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Lock to portrait so the camera sensor-rotation calculations are stable.
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
 
-  runApp(const ChineseCharOcrApp());
+    // Render behind the status bar and navigation bar for a true full-screen
+    // camera preview.
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    runApp(const ChineseCharOcrApp());
+  }, (error, stack) {
+    debugPrint('Uncaught zone error: $error\n$stack');
+  });
 }
 
 class ChineseCharOcrApp extends StatelessWidget {
