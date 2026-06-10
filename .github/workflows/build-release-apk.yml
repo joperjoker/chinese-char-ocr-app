@@ -132,6 +132,52 @@ jobs:
                 json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
             print(f'Wrote {os.path.getsize(out)} bytes → {out}')
 
+      - name: Generate Chinese definitions data
+        shell: python
+        run: |
+            # Build a compact {word: definition} table from the MIT-licensed
+            # pwxcoo/chinese-xinhua dataset.  word.json covers single hanzi;
+            # ci.json covers multi-character words.  ci.json entries are kept
+            # only when the word also exists in the bundled CEDICT index, so
+            # the asset stays compact and every definition is reachable from
+            # a recognition result card.
+            import json, os, re, urllib.request
+
+            def fetch(url):
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    return json.loads(r.read().decode('utf-8'))
+
+            def clean(text, limit=240):
+                text = re.sub(r'\s+', ' ', (text or '')).strip()
+                return text[:limit] + ('…' if len(text) > limit else '')
+
+            out = 'assets/dict/chinese_defs.json'
+            result = {}
+            try:
+                base = 'https://raw.githubusercontent.com/pwxcoo/chinese-xinhua/master/data'
+                with open('assets/dict/cedictJSON.json', encoding='utf-8') as f:
+                    known = {e.get('simplified', '') for e in json.load(f)}
+
+                for entry in fetch(f'{base}/word.json'):
+                    w, d = entry.get('word', ''), clean(entry.get('explanation', ''))
+                    if w and d:
+                        result[w] = d
+
+                for entry in fetch(f'{base}/ci.json'):
+                    w, d = entry.get('ci', ''), clean(entry.get('explanation', ''))
+                    if w and d and w in known and w not in result:
+                        result[w] = d
+
+                print(f'Built {len(result)} Chinese definitions.')
+            except Exception as e:
+                print(f'Warning: definition build failed ({e}); writing empty table.')
+                result = {}
+
+            with open(out, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
+            print(f'Wrote {os.path.getsize(out)} bytes → {out}')
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -198,8 +244,11 @@ jobs:
           body: |
             Chinese Character OCR App — release APK built from commit ${{ github.sha }}.
 
-            This app uses ML Kit for real-time Chinese character recognition
-            and provides Hanyu Pinyin via a local CEDICT dictionary lookup.
+            Point the camera at Chinese text and tap the shutter. The app
+            recognises the characters on-device with ML Kit and shows, for
+            every word and character: tone-marked Hanyu Pinyin, left/right
+            radical decomposition, an English definition (CEDICT), and a
+            Chinese definition (xinhua dataset). Fully offline.
 
             Download `app-release.apk` below to install on an Android device.
           files: build/app/outputs/flutter-apk/app-release.apk
