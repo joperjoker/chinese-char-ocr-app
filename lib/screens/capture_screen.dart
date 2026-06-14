@@ -47,13 +47,29 @@ class _CaptureScreenState extends State<CaptureScreen>
   bool _capturing = false;
   bool _torchOn = false;
 
+  // Set from the persisted breadcrumb when a previous capture died mid-pipeline
+  // (e.g. a native crash that Dart cannot catch). Surfaced as a subtle,
+  // dismissible banner so the failing step is visible without a debugger.
+  String? _previousCrashStep;
+  bool _crashBannerDismissed = false;
+
   // ── Lifecycle ───────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadPreviousCrash();
     _init();
+  }
+
+  /// Reads the breadcrumb left by a previous run. A non-null value means the
+  /// last capture did not finish — the value names the step it stopped at.
+  Future<void> _loadPreviousCrash() async {
+    final step = await CrashBreadcrumbs.readPrevious();
+    if (step != null && mounted) {
+      setState(() => _previousCrashStep = step);
+    }
   }
 
   @override
@@ -182,7 +198,11 @@ class _CaptureScreenState extends State<CaptureScreen>
     final controller = _camera;
     if (controller == null || _capturing) return;
 
-    setState(() => _capturing = true);
+    setState(() {
+      _capturing = true;
+      // A fresh attempt supersedes any earlier crash diagnostic.
+      _previousCrashStep = null;
+    });
     final stopwatch = Stopwatch()..start();
     String? sanitisedPath;
     XFile? shot;
@@ -280,6 +300,12 @@ class _CaptureScreenState extends State<CaptureScreen>
             const _ViewfinderFrame(),
             _buildTopBar(),
             _buildBottomPanel(),
+            if (_previousCrashStep != null && !_crashBannerDismissed)
+              _CrashDiagnosticBanner(
+                step: _previousCrashStep!,
+                onDismiss: () =>
+                    setState(() => _crashBannerDismissed = true),
+              ),
             if (_capturing) const _ProcessingOverlay(),
           ],
         ),
@@ -510,6 +536,50 @@ class _ProcessingOverlay extends StatelessWidget {
 // ────────────────────────────────────────────────────────────────────────────────
 // Viewfinder corner-bracket overlay
 // ────────────────────────────────────────────────────────────────────────────────
+
+/// A subtle, dismissible banner shown when the previous capture attempt ended
+/// mid-pipeline (typically a native crash). It names the last completed step,
+/// turning an otherwise opaque crash into actionable diagnostics.
+class _CrashDiagnosticBanner extends StatelessWidget {
+  const _CrashDiagnosticBanner({required this.step, required this.onDismiss});
+
+  final String step;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 12,
+      right: 12,
+      top: MediaQuery.of(context).padding.top + 56,
+      child: Material(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.amber, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Previous scan stopped at: $step',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+              IconButton(
+                onPressed: onDismiss,
+                icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Dismiss',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _ViewfinderFrame extends StatelessWidget {
   const _ViewfinderFrame();

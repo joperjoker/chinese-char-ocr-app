@@ -12,9 +12,11 @@ dependencies:
     sdk: flutter
 
   # OCR text recognition via Google ML Kit.
-  # 0.15.x bundles text-recognition-chinese 16.0.1+ whose native libraries
-  # are 16KB-page aligned — required on Android 15/16 devices, where the
-  # older libs crash natively at the first recognition call.
+  # This plugin bundles ONLY the Latin recogniser; the Chinese model is added
+  # as a direct `implementation` dependency in android/app/build.gradle (the
+  # plugin declares it `compileOnly`, so it is otherwise absent from the APK).
+  # 0.15.x pins text-recognition 16.0.1, whose native libraries are 16KB-page
+  # aligned — required on Android 15/16, where older libs crash natively.
   google_mlkit_text_recognition: ^0.15.1
 
   # Camera access for live capture

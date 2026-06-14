@@ -41,3 +41,22 @@ android {
 flutter {
     source "../.."
 }
+
+dependencies {
+    // ML Kit's bundled Chinese text-recognition model + native libraries.
+    //
+    // The google_mlkit_text_recognition plugin declares the language-specific
+    // recognisers (chinese/japanese/korean/devanagari) as `compileOnly`, so
+    // that Latin-only apps are not forced to ship every model.  The practical
+    // consequence is that the Chinese model is NOT packaged into our APK
+    // unless we add it here explicitly.  Without this line, calling
+    // TextRecognizer(script: TextRecognitionScript.chinese).processImage(...)
+    // reaches native code that is absent from the APK and the whole process
+    // crashes at the moment recognition starts.
+    //
+    // 16.0.1 matches the plugin's bundled `text-recognition:16.0.1` base, so
+    // there is no version skew and the native libraries share the same
+    // 16KB-page alignment required by Android 15/16.  This is the bundled
+    // (offline) model, so recognition continues to work with no network.
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+}
