@@ -67,6 +67,33 @@ class TextAnalyzer {
     return composeComponents(sorted.first.char, sorted.last.char);
   }
 
+  /// Composes two cards from OCR candidate lists for the left and right card,
+  /// each ordered best-first.
+  ///
+  /// The composition table is used as a strong prior to correct near-miss OCR
+  /// errors: the first (left, right) pair that forms a real character wins, so
+  /// a slightly mis-read top guess is recovered when a lower-ranked candidate
+  /// composes. Falls back to the best guess from each card when no pair forms a
+  /// known character.
+  ComposeResult composeFromCandidates(
+    List<String> leftCandidates,
+    List<String> rightCandidates,
+  ) {
+    for (final left in leftCandidates) {
+      for (final right in rightCandidates) {
+        final combinedChar = radicals.compose(left, right);
+        if (combinedChar != null) {
+          return ComposeResult(
+            left: buildItem(left),
+            right: buildItem(right),
+            combined: buildItem(combinedChar),
+          );
+        }
+      }
+    }
+    return composeComponents(leftCandidates.first, rightCandidates.first);
+  }
+
   /// Builds a fully-populated [RecognisedItem] (pinyin, bilingual definitions,
   /// and — for single characters — radical decomposition) for [text].
   RecognisedItem buildItem(String text) {

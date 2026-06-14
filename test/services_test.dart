@@ -197,5 +197,30 @@ void main() {
         isNull,
       );
     });
+
+    test('composeFromCandidates uses the best top guesses when they compose',
+        () {
+      final result = analyzer.composeFromCandidates(['女', '安'], ['子', '好']);
+      expect(result.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('composeFromCandidates recovers when the top OCR guess is wrong', () {
+      // Left card's best guess (孑) is a near-miss; 女 is a lower candidate.
+      // Only 女 + 子 forms a known character, so it must be selected.
+      final result = analyzer.composeFromCandidates(['孑', '女'], ['子']);
+      expect(result.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('composeFromCandidates falls back to top guesses when none compose',
+        () {
+      final result = analyzer.composeFromCandidates(['女'], ['女']);
+      expect(result.isValid, isFalse);
+      expect(result.left.text, '女');
+      expect(result.right.text, '女');
+    });
   });
 }

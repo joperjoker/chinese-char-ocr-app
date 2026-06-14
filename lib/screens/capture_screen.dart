@@ -229,21 +229,13 @@ class _CaptureScreenState extends State<CaptureScreen>
       shot = await controller.takePicture();
 
       await CrashBreadcrumbs.mark('2 photo taken (preparing image)');
-      // Re-encode to a plain bounded-size PNG so ML Kit's native decoder
-      // never sees exotic flagship JPEG variants (e.g. Ultra HDR gain maps).
-      sanitisedPath = await ImageSanitizer.sanitise(shot.path);
-      final ocrPath = sanitisedPath ?? shot.path;
 
-      await CrashBreadcrumbs.mark('3 image prepared (recognising text)');
-      final recognised = await _textRecognizer
-          .processImage(InputImage.fromFilePath(ocrPath));
-
-      await CrashBreadcrumbs.mark('4 text recognised (analysing)');
-      stopwatch.stop();
-
-      // ── Combine mode: read the two cards and compose them ──────────────────
+      // ── Combine mode: recognise each card on its own, then compose ─────────
       if (_mode == CaptureMode.combine) {
-        final result = _analyzer.composeFromGlyphs(_extractGlyphs(recognised));
+        await CrashBreadcrumbs.mark('3 image prepared (recognising text)');
+        final result = await _recogniseCards(shot.path);
+        await CrashBreadcrumbs.mark('4 text recognised (analysing)');
+        stopwatch.stop();
         await CrashBreadcrumbs.mark('5 analysis done (opening results)');
         await CrashBreadcrumbs.clear();
         if (!mounted) return;
@@ -263,6 +255,18 @@ class _CaptureScreenState extends State<CaptureScreen>
       }
 
       // ── Scan mode: analyse a passage of text ───────────────────────────────
+      // Re-encode to a plain bounded-size PNG so ML Kit's native decoder never
+      // sees exotic flagship JPEG variants (e.g. Ultra HDR gain maps).
+      sanitisedPath = await ImageSanitizer.sanitise(shot.path);
+      final ocrPath = sanitisedPath ?? shot.path;
+
+      await CrashBreadcrumbs.mark('3 image prepared (recognising text)');
+      final recognised = await _textRecognizer
+          .processImage(InputImage.fromFilePath(ocrPath));
+
+      await CrashBreadcrumbs.mark('4 text recognised (analysing)');
+      stopwatch.stop();
+
       final analysis = _analyzer.analyse(recognised.text);
       await CrashBreadcrumbs.mark('5 analysis done (opening results)');
       if (!mounted) return;
@@ -291,6 +295,78 @@ class _CaptureScreenState extends State<CaptureScreen>
       if (sanitisedPath != null) File(sanitisedPath).delete().ignore();
       if (mounted) setState(() => _capturing = false);
     }
+  }
+
+  /// Recognises the two cards for combine mode.
+  ///
+  /// Primary path: crop the frame into a left-card and a right-card image and
+  /// OCR each on its own. Reading one isolated, white-margined glyph at a time
+  /// is far more accurate than reading both cards in a single pass, and removes
+  /// any left/right ambiguity (the left crop is always the left card). The
+  /// composition table then picks the best-forming candidate pair.
+  ///
+  /// Fallback: a single whole-frame OCR split by glyph position — used only
+  /// when cropping or per-card OCR yields nothing.
+  Future<ComposeResult?> _recogniseCards(String shotPath) async {
+    final halves = await ImageSanitizer.sanitiseHalves(shotPath);
+    if (halves != null) {
+      try {
+        final leftText = await _textRecognizer
+            .processImage(InputImage.fromFilePath(halves.left));
+        final rightText = await _textRecognizer
+            .processImage(InputImage.fromFilePath(halves.right));
+        final leftCandidates = _glyphCandidates(leftText);
+        final rightCandidates = _glyphCandidates(rightText);
+        if (leftCandidates.isNotEmpty && rightCandidates.isNotEmpty) {
+          return _analyzer.composeFromCandidates(
+            leftCandidates,
+            rightCandidates,
+          );
+        }
+      } finally {
+        File(halves.left).delete().ignore();
+        File(halves.right).delete().ignore();
+      }
+    }
+
+    // Fallback: whole-frame OCR + positional split.
+    final sanitised = await ImageSanitizer.sanitise(shotPath);
+    final ocrPath = sanitised ?? shotPath;
+    final whole = await _textRecognizer
+        .processImage(InputImage.fromFilePath(ocrPath));
+    final result = _analyzer.composeFromGlyphs(_extractGlyphs(whole));
+    if (sanitised != null) File(sanitised).delete().ignore();
+    return result;
+  }
+
+  /// Returns the CJK characters in [recognised], best-first, ranked by glyph
+  /// area so the prominent character on a card outranks stray marks. Capped to
+  /// a few candidates, which the composition step uses to recover from
+  /// near-miss OCR errors.
+  List<String> _glyphCandidates(RecognizedText recognised) {
+    final scored = <({String char, double area})>[];
+    for (final block in recognised.blocks) {
+      for (final line in block.lines) {
+        for (final element in line.elements) {
+          final cjk = _dict.extractChinese(element.text);
+          if (cjk.isEmpty) continue;
+          final box = element.boundingBox;
+          final area = box.width * box.height;
+          for (final rune in cjk.runes) {
+            scored.add((char: String.fromCharCode(rune), area: area));
+          }
+        }
+      }
+    }
+    scored.sort((a, b) => b.area.compareTo(a.area));
+
+    final seen = <String>{};
+    final candidates = <String>[];
+    for (final entry in scored) {
+      if (seen.add(entry.char)) candidates.add(entry.char);
+      if (candidates.length >= 4) break;
+    }
+    return candidates;
   }
 
   /// Flattens ML Kit's recognised text into individual CJK characters, each
@@ -733,17 +809,7 @@ class _TwoCardFrame extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _CardOutline(label: '左 Left'),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '＋',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
+          SizedBox(width: 28),
           _CardOutline(label: '右 Right'),
         ],
       ),
