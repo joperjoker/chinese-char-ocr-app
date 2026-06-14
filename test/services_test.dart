@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chinese_char_ocr_app/models/compose_result.dart';
 import 'package:chinese_char_ocr_app/services/chinese_definition_service.dart';
 import 'package:chinese_char_ocr_app/services/dictionary_service.dart';
 import 'package:chinese_char_ocr_app/services/radical_service.dart';
@@ -140,6 +141,61 @@ void main() {
       expect(item.pinyin, isNotEmpty); // lpinyin fallback: míng
       expect(item.englishDefinitions, isEmpty);
       expect(item.radicals?.left, '日');
+    });
+  });
+
+  group('TextAnalyzer card combination', () {
+    late TextAnalyzer analyzer;
+
+    setUp(() {
+      analyzer = TextAnalyzer(
+        dictionary: DictionaryService()..loadFromString(_cedictFixture),
+        radicals: RadicalService()..loadFromString(_radicalFixture),
+        chineseDefinitions: ChineseDefinitionService()
+          ..loadFromString(_chineseDefsFixture),
+      );
+    });
+
+    test('composeComponents combines left + right into the character', () {
+      final result = analyzer.composeComponents('女', '子');
+      expect(result.isValid, isTrue);
+      expect(result.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+      expect(result.combined?.pinyin, 'hǎo');
+      expect(result.combined?.englishDefinitions, contains('good'));
+    });
+
+    test('composeComponents reports no combined char for unknown pairs', () {
+      final result = analyzer.composeComponents('女', '女');
+      expect(result.isValid, isFalse);
+      expect(result.combined, isNull);
+      // Components are still populated so their meanings can be shown.
+      expect(result.left.text, '女');
+      expect(result.right.text, '女');
+    });
+
+    test('composeFromGlyphs orders parts by x position, not reading order', () {
+      // 子 captured on the right (larger x), 女 on the left (smaller x):
+      // the spatial order must yield 女 + 子 → 好.
+      final result = analyzer.composeFromGlyphs(const [
+        PositionedGlyph(char: '子', xCenter: 480),
+        PositionedGlyph(char: '女', xCenter: 60),
+      ]);
+      expect(result, isNotNull);
+      expect(result!.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('composeFromGlyphs needs at least two glyphs', () {
+      expect(analyzer.composeFromGlyphs(const []), isNull);
+      expect(
+        analyzer.composeFromGlyphs(
+          const [PositionedGlyph(char: '女', xCenter: 0)],
+        ),
+        isNull,
+      );
     });
   });
 }

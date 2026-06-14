@@ -194,6 +194,17 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
+      - name: Static analysis
+        # Informational: surfaces lints in the log without blocking a release
+        # over a style nit. Real compile errors still fail the build step below.
+        continue-on-error: true
+        run: flutter analyze
+
+      - name: Run unit tests
+        # Hard gate: the dictionary, radical, composition and analyzer logic is
+        # covered here, so a regression fails the build before any APK ships.
+        run: flutter test
+
       - name: Build release APK
         # continue-on-error absorbs the known false-positive "Already watching
         # path: android" inotify exception that Flutter throws when the build

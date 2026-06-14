@@ -5,19 +5,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../models/compose_result.dart';
 import '../services/chinese_definition_service.dart';
 import '../services/crash_breadcrumbs.dart';
 import '../services/dictionary_service.dart';
 import '../services/image_sanitizer.dart';
 import '../services/radical_service.dart';
 import '../services/text_analyzer.dart';
+import 'compose_result_screen.dart';
 import 'result_screen.dart';
+
+/// How a captured frame is interpreted.
+enum CaptureMode {
+  /// Read a left-half card and a right-half card and combine them into the
+  /// character they form — the app's primary purpose.
+  combine,
+
+  /// Read a line/passage of Chinese text and analyse every word.
+  scan,
+}
 
 /// Camera capture screen.
 ///
-/// Point the camera at Chinese text and tap the shutter: the frame is
-/// photographed, recognised with ML Kit, and the analysis (pinyin, radical
-/// decomposition, bilingual definitions) is presented on a [ResultScreen].
+/// In **combine** mode it reads two side-by-side cards (a left half and a right
+/// half) and shows the character they form. In **scan** mode it reads a passage
+/// of Chinese text. The frame is photographed, recognised with ML Kit, and the
+/// result presented on the matching screen.
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
 
@@ -46,6 +59,9 @@ class _CaptureScreenState extends State<CaptureScreen>
   String _initMessage = 'Initialising…';
   bool _capturing = false;
   bool _torchOn = false;
+
+  /// The combiner is the app's main purpose, so it is the default mode.
+  CaptureMode _mode = CaptureMode.combine;
 
   // Set from the persisted breadcrumb when a previous capture died mid-pipeline
   // (e.g. a native crash that Dart cannot catch). Surfaced as a subtle,
@@ -225,6 +241,28 @@ class _CaptureScreenState extends State<CaptureScreen>
       await CrashBreadcrumbs.mark('4 text recognised (analysing)');
       stopwatch.stop();
 
+      // ── Combine mode: read the two cards and compose them ──────────────────
+      if (_mode == CaptureMode.combine) {
+        final result = _analyzer.composeFromGlyphs(_extractGlyphs(recognised));
+        await CrashBreadcrumbs.mark('5 analysis done (opening results)');
+        await CrashBreadcrumbs.clear();
+        if (!mounted) return;
+        if (result == null) {
+          _showMessage('未识别到左右两部分 — aim at the Left and Right cards.');
+          return;
+        }
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ComposeResultScreen(
+              result: result,
+              elapsedMs: stopwatch.elapsedMilliseconds,
+            ),
+          ),
+        );
+        return;
+      }
+
+      // ── Scan mode: analyse a passage of text ───────────────────────────────
       final analysis = _analyzer.analyse(recognised.text);
       await CrashBreadcrumbs.mark('5 analysis done (opening results)');
       if (!mounted) return;
@@ -253,6 +291,34 @@ class _CaptureScreenState extends State<CaptureScreen>
       if (sanitisedPath != null) File(sanitisedPath).delete().ignore();
       if (mounted) setState(() => _capturing = false);
     }
+  }
+
+  /// Flattens ML Kit's recognised text into individual CJK characters, each
+  /// tagged with the horizontal centre of its bounding box. Characters within
+  /// a multi-character element are spread evenly across the element's width so
+  /// that, even if two cards are read as one element, their left/right order is
+  /// preserved.
+  List<PositionedGlyph> _extractGlyphs(RecognizedText recognised) {
+    final glyphs = <PositionedGlyph>[];
+    for (final block in recognised.blocks) {
+      for (final line in block.lines) {
+        for (final element in line.elements) {
+          final cjk = _dict.extractChinese(element.text);
+          if (cjk.isEmpty) continue;
+          final box = element.boundingBox;
+          final runes = cjk.runes.toList();
+          for (var i = 0; i < runes.length; i++) {
+            final fraction =
+                runes.length == 1 ? 0.5 : (i + 0.5) / runes.length;
+            glyphs.add(PositionedGlyph(
+              char: String.fromCharCode(runes[i]),
+              xCenter: box.left + fraction * box.width,
+            ));
+          }
+        }
+      }
+    }
+    return glyphs;
   }
 
   Future<void> _toggleTorch() async {
@@ -297,7 +363,10 @@ class _CaptureScreenState extends State<CaptureScreen>
           fit: StackFit.expand,
           children: [
             _buildCameraLayer(),
-            const _ViewfinderFrame(),
+            if (_mode == CaptureMode.combine)
+              const _TwoCardFrame()
+            else
+              const _ViewfinderFrame(),
             _buildTopBar(),
             _buildBottomPanel(),
             if (_previousCrashStep != null && !_crashBannerDismissed)
@@ -424,6 +493,12 @@ class _CaptureScreenState extends State<CaptureScreen>
   }
 
   Widget _buildBottomPanel() {
+    final instruction = _mode == CaptureMode.combine
+        ? '把左右卡片并排对准，点击快门组合\n'
+            'Line up the Left + Right cards, tap to combine'
+        : '对准中文字符，点击快门识别\n'
+            'Aim at Chinese text, tap the shutter';
+
     return Positioned(
       left: 0,
       right: 0,
@@ -441,12 +516,21 @@ class _CaptureScreenState extends State<CaptureScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 10, horizontal: 32),
+              Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 2),
+                child: _ModeToggle(
+                  mode: _mode,
+                  onChanged:
+                      _capturing ? null : (m) => setState(() => _mode = m),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 8, horizontal: 32),
                 child: Text(
-                  '对准中文字符，点击快门识别\nAim at Chinese text, tap the shutter',
+                  instruction,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
                     height: 1.5,
@@ -533,9 +617,9 @@ class _ProcessingOverlay extends StatelessWidget {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Viewfinder corner-bracket overlay
-// ────────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Crash diagnostic banner — surfaces the persisted breadcrumb
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// A subtle, dismissible banner shown when the previous capture attempt ended
 /// mid-pipeline (typically a native crash). It names the last completed step,
@@ -577,6 +661,124 @@ class _CrashDiagnosticBanner extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mode toggle — Combine vs Scan
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ModeToggle extends StatelessWidget {
+  const _ModeToggle({required this.mode, required this.onChanged});
+
+  final CaptureMode mode;
+
+  /// Null disables switching (e.g. while a capture is in flight).
+  final ValueChanged<CaptureMode>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _segment('组合 Combine', CaptureMode.combine),
+          _segment('扫描 Scan', CaptureMode.scan),
+        ],
+      ),
+    );
+  }
+
+  Widget _segment(String label, CaptureMode value) {
+    final selected = mode == value;
+    return GestureDetector(
+      onTap: onChanged == null ? null : () => onChanged!(value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? const Color(0xFFB71C1C) : Colors.white70,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Two-card viewfinder (combine mode) — guides Left + Right card placement
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TwoCardFrame extends StatelessWidget {
+  const _TwoCardFrame();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _CardOutline(label: '左 Left'),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              '＋',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          _CardOutline(label: '右 Right'),
+        ],
+      ),
+    );
+  }
+}
+
+class _CardOutline extends StatelessWidget {
+  const _CardOutline({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 96,
+          height: 132,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.white, width: 2.5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 }

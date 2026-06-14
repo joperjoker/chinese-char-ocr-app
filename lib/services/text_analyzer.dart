@@ -1,5 +1,6 @@
 import 'package:lpinyin/lpinyin.dart';
 
+import '../models/compose_result.dart';
 import '../models/recognised_item.dart';
 import 'chinese_definition_service.dart';
 import 'dictionary_service.dart';
@@ -34,12 +35,41 @@ class TextAnalyzer {
     final items = <RecognisedItem>[];
     for (final segmentText in dictionary.segment(chineseText)) {
       if (!seen.add(segmentText)) continue;
-      items.add(_buildItem(segmentText));
+      items.add(buildItem(segmentText));
     }
     return TextAnalysis(chineseText: chineseText, items: items);
   }
 
-  RecognisedItem _buildItem(String text) {
+  /// Combines a left-hand [left] and a right-hand [right] component into the
+  /// character they form — the core "card combiner" behaviour.
+  ///
+  /// The returned [ComposeResult] always carries full pinyin/definition
+  /// information for both components; [ComposeResult.combined] is populated
+  /// only when [left] + [right] correspond to a known left-right character
+  /// (e.g. 女 + 子 → 好).
+  ComposeResult composeComponents(String left, String right) {
+    final combinedChar = radicals.compose(left, right);
+    return ComposeResult(
+      left: buildItem(left),
+      right: buildItem(right),
+      combined: combinedChar == null ? null : buildItem(combinedChar),
+    );
+  }
+
+  /// Picks the spatially leftmost and rightmost glyphs from [glyphs] — the two
+  /// cards held side by side — and composes them.
+  ///
+  /// Returns null when fewer than two glyphs were detected, so the caller can
+  /// prompt the user to aim at both cards.
+  ComposeResult? composeFromGlyphs(List<PositionedGlyph> glyphs) {
+    if (glyphs.length < 2) return null;
+    final sorted = [...glyphs]..sort((a, b) => a.xCenter.compareTo(b.xCenter));
+    return composeComponents(sorted.first.char, sorted.last.char);
+  }
+
+  /// Builds a fully-populated [RecognisedItem] (pinyin, bilingual definitions,
+  /// and — for single characters — radical decomposition) for [text].
+  RecognisedItem buildItem(String text) {
     final entry = dictionary.lookup(text);
 
     // Pinyin priority: CEDICT tone-marked reading → lpinyin fallback.
