@@ -228,6 +228,42 @@ jobs:
             fi
           fi
 
+      - name: Verify Chinese OCR model is bundled in the APK
+        # Hard gate against the class of bug that broke v1.0.1–v1.0.33: the
+        # google_mlkit_text_recognition plugin declares the Chinese model
+        # `compileOnly`, so it is absent from the APK unless the app adds it as
+        # an `implementation` dependency.  When absent, every Chinese
+        # recognition call crashes the process natively.  The release runtime
+        # classpath is the definitive source of truth for what is packaged, so
+        # we assert text-recognition-chinese is on it and fail the build if not.
+        run: |
+          set -o pipefail
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          echo "=== APK size ==="; du -h "$APK"
+
+          echo "=== Resolving release runtime classpath ==="
+          ( cd android && ./gradlew -q :app:dependencies \
+              --configuration releaseRuntimeClasspath --console=plain 2>/dev/null ) \
+              > /tmp/deps.txt || true
+          echo "--- ML Kit entries on releaseRuntimeClasspath ---"
+          grep -iE "mlkit|text-recognition" /tmp/deps.txt | sort -u || true
+
+          echo "=== Native libraries packaged in the APK (largest last) ==="
+          unzip -l "$APK" | awk '/\.so$/ {print $1"\t"$4}' | sort -n | tail -40 || true
+
+          echo "=== ML Kit / OCR / model assets packaged in the APK ==="
+          unzip -l "$APK" | grep -iE "mlkit|ocr|recognition|chinese|latin|model|\.tflite" \
+              || echo "(no matching asset entries)"
+
+          echo "=== Assertion ==="
+          if grep -qiE "text-recognition-chinese" /tmp/deps.txt; then
+            echo "PASS: text-recognition-chinese is on the release runtime classpath — Chinese model is bundled into the APK."
+          else
+            echo "FAIL: text-recognition-chinese is NOT on the release runtime classpath."
+            echo "The Chinese OCR model would be missing and recognition would crash. Failing the build."
+            exit 1
+          fi
+
       - name: Upload APK artifact
         continue-on-error: true
         uses: actions/upload-artifact@v4
