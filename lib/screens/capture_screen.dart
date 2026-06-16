@@ -7,6 +7,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 
 import '../models/compose_result.dart';
 import '../services/chinese_definition_service.dart';
+import '../services/component_map.dart';
 import '../services/crash_breadcrumbs.dart';
 import '../services/dictionary_service.dart';
 import '../services/image_sanitizer.dart';
@@ -340,9 +341,13 @@ class _CaptureScreenState extends State<CaptureScreen>
   }
 
   /// Returns the CJK characters in [recognised], best-first, ranked by glyph
-  /// area so the prominent character on a card outranks stray marks. Capped to
-  /// a few candidates, which the composition step uses to recover from
-  /// near-miss OCR errors.
+  /// area so the prominent character on a card outranks stray marks.
+  ///
+  /// Each candidate is then expanded with its known component/standalone
+  /// variants (e.g. if OCR reads 水 but the card shows 氵, we add 氵 right
+  /// after 水 so the composition search covers both forms).  This handles the
+  /// common mismatch where a card shows the component form of a radical but OCR
+  /// outputs the standalone form — or vice versa.
   List<String> _glyphCandidates(RecognizedText recognised) {
     final scored = <({String char, double area})>[];
     for (final block in recognised.blocks) {
@@ -360,13 +365,19 @@ class _CaptureScreenState extends State<CaptureScreen>
     }
     scored.sort((a, b) => b.area.compareTo(a.area));
 
+    // Collect the top distinct OCR hits (area-ranked).
     final seen = <String>{};
-    final candidates = <String>[];
+    final base = <String>[];
     for (final entry in scored) {
-      if (seen.add(entry.char)) candidates.add(entry.char);
-      if (candidates.length >= 4) break;
+      if (seen.add(entry.char)) base.add(entry.char);
+      if (base.length >= 5) break;
     }
-    return candidates;
+
+    // Expand each base candidate with its component/standalone variant forms.
+    // The original rank order is preserved so the best OCR guess still has
+    // priority in composeFromCandidates().  Any character can be either the
+    // left or right component of a compound, so no side-biasing is applied.
+    return expandWithComponentVariants(base);
   }
 
   /// Flattens ML Kit's recognised text into individual CJK characters, each

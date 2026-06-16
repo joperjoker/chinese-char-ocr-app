@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chinese_char_ocr_app/models/compose_result.dart';
 import 'package:chinese_char_ocr_app/services/chinese_definition_service.dart';
+import 'package:chinese_char_ocr_app/services/component_map.dart';
 import 'package:chinese_char_ocr_app/services/dictionary_service.dart';
 import 'package:chinese_char_ocr_app/services/radical_service.dart';
 import 'package:chinese_char_ocr_app/services/text_analyzer.dart';
@@ -81,6 +82,57 @@ void main() {
       expect(radicals.compose('女', '子'), '好');
       expect(radicals.compose('日', '月'), '明');
       expect(radicals.compose('日', '日'), isNull);
+    });
+
+    test('isKnownLeftComponent identifies left components', () {
+      expect(radicals.isKnownLeftComponent('女'), isTrue);
+      expect(radicals.isKnownLeftComponent('日'), isTrue);
+      // 子 and 月 are right components in the fixture
+      expect(radicals.isKnownLeftComponent('子'), isFalse);
+    });
+
+    test('isKnownRightComponent identifies right components', () {
+      expect(radicals.isKnownRightComponent('子'), isTrue);
+      expect(radicals.isKnownRightComponent('月'), isTrue);
+      // 女 is only a left component in the fixture
+      expect(radicals.isKnownRightComponent('女'), isFalse);
+    });
+
+    test('left and right queries are independent — not mutually exclusive', () {
+      // A character can legitimately appear on BOTH sides in a real dataset
+      // (e.g. 日 in 晴/明 or 月 in 明/朋). The two methods must be independent.
+      // In the fixture 日=left, 月=right; we verify neither blocks the other.
+      expect(radicals.isKnownLeftComponent('日'), isTrue);
+      expect(radicals.isKnownRightComponent('日'), isFalse); // not in fixture as right
+      expect(radicals.isKnownRightComponent('月'), isTrue);
+      expect(radicals.isKnownLeftComponent('月'), isFalse); // not in fixture as left
+    });
+  });
+
+  group('ComponentMap', () {
+    test('expandWithComponentVariants adds standalone↔component variants', () {
+      // 水 (standalone water) → should also include 氵 (left component form)
+      expect(expandWithComponentVariants(['水']), containsAll(['水', '氵']));
+      // 氵 (component) → should also include 水 and 冫
+      expect(expandWithComponentVariants(['氵']), containsAll(['氵', '水', '冫']));
+    });
+
+    test('preserves original rank order — OCR best guess stays first', () {
+      final result = expandWithComponentVariants(['心', '日']);
+      expect(result.first, '心');
+      expect(result[1], '忄'); // variant inserted right after its origin
+      expect(result[2], '日');
+    });
+
+    test('deduplicates when two candidates share a variant', () {
+      // Both 水 and 氵 expand into each other; no duplicates should appear.
+      final result = expandWithComponentVariants(['水', '氵']);
+      final unique = result.toSet().toList();
+      expect(result.length, unique.length);
+    });
+
+    test('characters with no variants are returned unchanged', () {
+      expect(expandWithComponentVariants(['好', '明']), ['好', '明']);
     });
   });
 

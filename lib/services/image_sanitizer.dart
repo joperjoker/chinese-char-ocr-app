@@ -120,11 +120,24 @@ class ImageSanitizer {
         ui.Rect.fromLTWH(0, 0, dstWidth, dstHeight),
         ui.Paint()..color = const ui.Color(0xFFFFFFFF),
       );
+      // A mild contrast boost (factor 1.4, centred at mid-grey 128) sharpens
+      // the boundary between ink strokes and the card background, which
+      // markedly improves ML Kit's ability to read simplified component forms
+      // whose strokes are few and thin (e.g. 氵, 亻, 讠, 忄, 扌).
+      // ColorFilter.matrix offsets are in the 0-255 unnormalised colour space;
+      // offset = 128 * (1 - 1.4) = -51.2.
       canvas.drawImageRect(
         src,
         srcRect,
         ui.Rect.fromLTWH(pad, pad, srcRect.width, srcRect.height),
-        ui.Paint()..filterQuality = ui.FilterQuality.high,
+        ui.Paint()
+          ..filterQuality = ui.FilterQuality.high
+          ..colorFilter = const ui.ColorFilter.matrix(<double>[
+            1.4, 0, 0, 0, -51.2,
+            0, 1.4, 0, 0, -51.2,
+            0, 0, 1.4, 0, -51.2,
+            0, 0, 0, 1, 0,
+          ]),
       );
       final picture = recorder.endRecording();
       out = await picture.toImage(dstWidth.round(), dstHeight.round());
