@@ -11,7 +11,8 @@ const _cedictFixture = '''
 [
   {"traditional":"好","simplified":"好","pinyinRead":"hǎo","pinyinType":"hao3","definition":["good","well"]},
   {"traditional":"我們","simplified":"我们","pinyinRead":"wǒ men","pinyinType":"wo3 men5","definition":["we","us"]},
-  {"traditional":"中國","simplified":"中国","pinyinRead":"zhōng guó","pinyinType":"zhong1 guo2","definition":["China"]}
+  {"traditional":"中國","simplified":"中国","pinyinRead":"zhōng guó","pinyinType":"zhong1 guo2","definition":["China"]},
+  {"traditional":"水","simplified":"水","pinyinRead":"shuǐ","pinyinType":"shui3","definition":["water"]}
 ]
 ''';
 
@@ -197,6 +198,23 @@ void main() {
       expect(item.englishDefinitions, isEmpty);
       expect(item.radicals?.left, '日');
     });
+
+    test('attaches the full-character version of a radical side form', () {
+      // 氵 is the reduced form of 水; buildItem must surface 水 with its reading
+      // and meaning so a learner can tell what the side "is".
+      final item = analyzer.buildItem('氵');
+      expect(item.hasFullForm, isTrue);
+      expect(item.fullForm?.text, '水');
+      expect(item.fullForm?.pinyin, 'shuǐ');
+      expect(item.fullForm?.englishDefinitions, contains('water'));
+      // The full character is itself a leaf — no further nesting.
+      expect(item.fullForm?.fullForm, isNull);
+    });
+
+    test('a side that is already a full character has no full-form', () {
+      expect(analyzer.buildItem('女').hasFullForm, isFalse);
+      expect(analyzer.buildItem('工').hasFullForm, isFalse);
+    });
   });
 
   group('TextAnalyzer card combination', () {
@@ -286,6 +304,18 @@ void main() {
       expect(result.combined?.text, '江');
       expect(result.left.text, '氵'); // the matching component form is surfaced
       expect(result.right.text, '工');
+    });
+
+    test('a recovered side carries both its component and full-character form',
+        () {
+      // The left side is the component 氵; the result must also offer its full
+      // character 水 (shuǐ, water) so both versions are shown.
+      final result = analyzer.composeFromCandidates(['水'], ['工']);
+      expect(result.left.text, '氵');
+      expect(result.left.fullForm?.text, '水');
+      expect(result.left.fullForm?.englishDefinitions, contains('water'));
+      // 工 is already a full character, so it has no separate full form.
+      expect(result.right.hasFullForm, isFalse);
     });
   });
 

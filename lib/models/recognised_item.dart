@@ -18,16 +18,25 @@ class RecognisedItem {
   /// Left/right radical decomposition — single characters only.
   final RadicalInfo? radicals;
 
+  /// When this item is a radical *component form* (e.g. 氵), the full standalone
+  /// character it is the reduced form of (e.g. 水, with its own pinyin and
+  /// definitions). Null when the item is already a full character.
+  final RecognisedItem? fullForm;
+
   const RecognisedItem({
     required this.text,
     required this.pinyin,
     this.englishDefinitions = const [],
     this.chineseDefinition,
     this.radicals,
+    this.fullForm,
   });
 
   /// True when this item is a multi-character word.
   bool get isWord => text.runes.length > 1;
+
+  /// True when a distinct full-character version of this side is available.
+  bool get hasFullForm => fullForm != null;
 }
 
 /// The full analysis of one recognised frame.

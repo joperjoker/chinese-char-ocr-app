@@ -110,6 +110,13 @@ class ItemCard extends StatelessWidget {
                         ],
                       ),
 
+                      // Full-character version of a radical side, e.g. 氵 → 水.
+                      if (item.hasFullForm)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: FullFormRow(full: item.fullForm!),
+                        ),
+
                       // Radical decomposition row, e.g.  女 ＋ 子 → 好
                       if (hasRadicals)
                         Padding(
@@ -185,6 +192,80 @@ class ItemCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shows the full standalone character a radical side is the reduced form of,
+/// e.g. 氵 → 水 (shuǐ, water). Gives a learner the reading and meaning of a side
+/// that, as a bare component, has neither.
+class FullFormRow extends StatelessWidget {
+  const FullFormRow({super.key, required this.full});
+
+  final RecognisedItem full;
+
+  @override
+  Widget build(BuildContext context) {
+    final gloss = full.englishDefinitions.isNotEmpty
+        ? full.englishDefinitions.first
+        : null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Text(
+            '完整字 Full',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFE65100),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            full.text,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFB71C1C),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (full.pinyin.isNotEmpty)
+                  Text(
+                    full.pinyin,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFE65100),
+                    ),
+                  ),
+                if (gloss != null)
+                  Text(
+                    gloss,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.3,
+                      color: Color(0xFF5D4037),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

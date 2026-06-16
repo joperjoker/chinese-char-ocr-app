@@ -97,6 +97,34 @@ const Map<String, List<String>> kComponentVariants = {
   '之': ['辶'],
 };
 
+/// Maps a left/right radical *component form* → the full standalone character
+/// it is the reduced form of. Used to enrich a recognised side with its "full
+/// character version": a card showing 氵 (which has no reading or meaning on its
+/// own) is the reduced form of 水 (shuǐ, water), so the result can show both.
+///
+/// Only forms that genuinely differ from a standalone character are listed; a
+/// side that already is a full character (女, 子, 工, 口 …) is absent and needs
+/// no enrichment.
+const Map<String, String> kComponentToStandalone = {
+  '氵': '水', // water
+  '冫': '冰', // ice
+  '亻': '人', // person
+  '讠': '言', // speech
+  '钅': '金', // metal / gold
+  '纟': '糸', // silk
+  '忄': '心', // heart
+  '扌': '手', // hand
+  '犭': '犬', // dog / beast
+  '礻': '示', // spirit / altar
+  '衤': '衣', // clothing
+  '饣': '食', // food / eat
+  '刂': '刀', // knife (right-side form)
+};
+
+/// The full standalone character a side [component] is the reduced form of, or
+/// null when the side is already a full character (or unknown).
+String? fullCharacterOf(String component) => kComponentToStandalone[component];
+
 /// Returns [candidates] expanded to include known component/standalone variants
 /// of each character, preserving original rank order (each original precedes
 /// its variants so the best OCR guess still has priority).

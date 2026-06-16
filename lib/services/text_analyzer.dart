@@ -175,6 +175,19 @@ class TextAnalyzer {
       englishDefinitions: entry?.definition ?? const [],
       chineseDefinition: chineseDefinitions.define(text),
       radicals: text.runes.length == 1 ? radicals.decompose(text) : null,
+      fullForm: _fullFormOf(text),
     );
+  }
+
+  /// When [text] is a radical component form (e.g. 氵), builds the item for the
+  /// full standalone character it represents (e.g. 水), so a side can be shown
+  /// in both its component and full-character forms. Returns null otherwise.
+  ///
+  /// Not recursive: the standalone characters (水, 人, 言 …) are never component
+  /// keys, so the nested item has no further [RecognisedItem.fullForm].
+  RecognisedItem? _fullFormOf(String text) {
+    final standalone = fullCharacterOf(text);
+    if (standalone == null || standalone == text) return null;
+    return buildItem(standalone);
   }
 }
