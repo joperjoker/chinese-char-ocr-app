@@ -70,15 +70,25 @@ jobs:
 
       - name: Download CEDICT dictionary
         run: |
+          # Re-download whenever the working copy lacks the FULL dictionary.
+          # The repo ships a tiny sample cedictJSON.json (a handful of entries)
+          # so the app and tests build locally; a bare `[ ! -f ]` check would
+          # see that placeholder and skip the download, shipping a 10-word
+          # dictionary in the release APK. Gate on file size instead so the
+          # real ~19MB / 112k-entry dictionary is always fetched for releases.
           mkdir -p assets/dict
-          if [ ! -f assets/dict/cedictJSON.json ]; then
-            echo "Downloading CEDICT dictionary from rawmarshmellows/chinese-pinyin-JSON..."
+          SIZE=0
+          if [ -f assets/dict/cedictJSON.json ]; then
+            SIZE=$(wc -c < assets/dict/cedictJSON.json)
+          fi
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "Dictionary missing or placeholder ($SIZE bytes); downloading full CEDICT…"
             curl -fL \
               "https://raw.githubusercontent.com/rawmarshmellows/chinese-pinyin-JSON/master/cedictJSON.json" \
               -o assets/dict/cedictJSON.json
             echo "Downloaded $(du -sh assets/dict/cedictJSON.json | cut -f1) dictionary."
           else
-            echo "Dictionary already present, skipping download."
+            echo "Full dictionary already present ($SIZE bytes), skipping download."
           fi
 
       - name: Generate radical decomposition data
@@ -177,6 +187,38 @@ jobs:
             with open(out, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
             print(f'Wrote {os.path.getsize(out)} bytes → {out}')
+
+      - name: Verify data assets are fully populated
+        # Hard gate. The dictionary, radical table and definitions are fetched
+        # from the network in the steps above; if any download silently failed
+        # (or a placeholder slipped through), the combine feature and all
+        # pinyin/definition lookups would be broken in the shipped APK. Refuse
+        # to build a release on under-populated data rather than ship it.
+        shell: python
+        run: |
+            import json, sys
+            checks = [
+                ('assets/dict/cedictJSON.json',   50000, 'CEDICT dictionary'),
+                ('assets/radicals/decomp.json',    5000, 'radical decomposition table'),
+                ('assets/dict/chinese_defs.json',  5000, 'Chinese definitions'),
+            ]
+            fail = False
+            for path, min_entries, label in checks:
+                try:
+                    data = json.load(open(path, encoding='utf-8'))
+                    n = len(data)
+                except Exception as e:
+                    print(f'FAIL: {label} ({path}) could not be parsed: {e}')
+                    fail = True
+                    continue
+                if n < min_entries:
+                    print(f'FAIL: {label} ({path}) has only {n} entries '
+                          f'(expected >= {min_entries}). A network download likely '
+                          'failed — refusing to ship a broken APK.')
+                    fail = True
+                else:
+                    print(f'OK: {label} has {n} entries.')
+            sys.exit(1 if fail else 0)
 
       - name: Set up Java 17
         uses: actions/setup-java@v4

@@ -11,7 +11,15 @@ class PositionedGlyph {
   /// Horizontal centre of the glyph in image pixels — larger is further right.
   final double xCenter;
 
-  const PositionedGlyph({required this.char, required this.xCenter});
+  /// Bounding-box area in square pixels, used to rank the prominent character
+  /// on a card above stray marks. Zero when unknown.
+  final double area;
+
+  const PositionedGlyph({
+    required this.char,
+    required this.xCenter,
+    this.area = 0,
+  });
 }
 
 /// The outcome of combining a left-hand and a right-hand component captured

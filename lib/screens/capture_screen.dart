@@ -7,7 +7,6 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 
 import '../models/compose_result.dart';
 import '../services/chinese_definition_service.dart';
-import '../services/component_map.dart';
 import '../services/crash_breadcrumbs.dart';
 import '../services/dictionary_service.dart';
 import '../services/image_sanitizer.dart';
@@ -300,15 +299,31 @@ class _CaptureScreenState extends State<CaptureScreen>
 
   /// Recognises the two cards for combine mode.
   ///
-  /// Primary path: crop the frame into a left-card and a right-card image and
-  /// OCR each on its own. Reading one isolated, white-margined glyph at a time
-  /// is far more accurate than reading both cards in a single pass, and removes
-  /// any left/right ambiguity (the left crop is always the left card). The
-  /// composition table then picks the best-forming candidate pair.
+  /// Primary path: a single whole-frame OCR, then split the detected glyphs at
+  /// the widest horizontal gap — the physical space between the two cards.
+  /// This is geometry-independent: it makes no assumption about where in the
+  /// frame the cards sit, so the left card is *always* assigned to the left and
+  /// the right card to the right, however the shot is framed. This is the key
+  /// fix for unstable side detection — a card drifting toward the centre no
+  /// longer risks being split across a fixed crop boundary.
   ///
-  /// Fallback: a single whole-frame OCR split by glyph position — used only
-  /// when cropping or per-card OCR yields nothing.
+  /// Fallback: isolate each half on its own white canvas and OCR separately.
+  /// This helps in the rarer case where the whole-frame pass merged the two
+  /// cards into a single detection or missed a faint glyph that only resolves
+  /// with a clean margin around it.
   Future<ComposeResult?> _recogniseCards(String shotPath) async {
+    final sanitised = await ImageSanitizer.sanitise(shotPath);
+    final ocrPath = sanitised ?? shotPath;
+    try {
+      final whole = await _textRecognizer
+          .processImage(InputImage.fromFilePath(ocrPath));
+      final clustered = _analyzer.composeByGap(_positionedGlyphs(whole));
+      if (clustered != null) return clustered;
+    } finally {
+      if (sanitised != null) File(sanitised).delete().ignore();
+    }
+
+    // Fallback: per-card crop + isolated OCR.
     final halves = await ImageSanitizer.sanitiseHalves(shotPath);
     if (halves != null) {
       try {
@@ -329,25 +344,44 @@ class _CaptureScreenState extends State<CaptureScreen>
         File(halves.right).delete().ignore();
       }
     }
-
-    // Fallback: whole-frame OCR + positional split.
-    final sanitised = await ImageSanitizer.sanitise(shotPath);
-    final ocrPath = sanitised ?? shotPath;
-    final whole = await _textRecognizer
-        .processImage(InputImage.fromFilePath(ocrPath));
-    final result = _analyzer.composeFromGlyphs(_extractGlyphs(whole));
-    if (sanitised != null) File(sanitised).delete().ignore();
-    return result;
+    return null;
   }
 
-  /// Returns the CJK characters in [recognised], best-first, ranked by glyph
-  /// area so the prominent character on a card outranks stray marks.
-  ///
-  /// Each candidate is then expanded with its known component/standalone
-  /// variants (e.g. if OCR reads 水 but the card shows 氵, we add 氵 right
-  /// after 水 so the composition search covers both forms).  This handles the
-  /// common mismatch where a card shows the component form of a radical but OCR
-  /// outputs the standalone form — or vice versa.
+  /// Flattens ML Kit's whole-frame result into individual CJK glyphs, each
+  /// tagged with its bounding-box horizontal centre and area. Multi-character
+  /// elements are spread evenly across their width so left/right order is
+  /// preserved even if both cards were read as one element. The heavy lifting
+  /// (gap split, speck filtering, ranking, composition) is done by
+  /// [TextAnalyzer.composeByGap], which is pure and unit-tested.
+  List<PositionedGlyph> _positionedGlyphs(RecognizedText recognised) {
+    final glyphs = <PositionedGlyph>[];
+    for (final block in recognised.blocks) {
+      for (final line in block.lines) {
+        for (final element in line.elements) {
+          final cjk = _dict.extractChinese(element.text);
+          if (cjk.isEmpty) continue;
+          final box = element.boundingBox;
+          final area = box.width * box.height;
+          final runes = cjk.runes.toList();
+          for (var i = 0; i < runes.length; i++) {
+            final fraction =
+                runes.length == 1 ? 0.5 : (i + 0.5) / runes.length;
+            glyphs.add(PositionedGlyph(
+              char: String.fromCharCode(runes[i]),
+              xCenter: box.left + fraction * box.width,
+              area: area,
+            ));
+          }
+        }
+      }
+    }
+    return glyphs;
+  }
+
+  /// Returns the CJK characters in [recognised] (a single isolated card crop),
+  /// best-first, ranked by glyph area so the prominent character on the card
+  /// outranks stray marks. Component/standalone variant expansion is applied
+  /// downstream by [TextAnalyzer.composeFromCandidates].
   List<String> _glyphCandidates(RecognizedText recognised) {
     final scored = <({String char, double area})>[];
     for (final block in recognised.blocks) {
@@ -365,47 +399,13 @@ class _CaptureScreenState extends State<CaptureScreen>
     }
     scored.sort((a, b) => b.area.compareTo(a.area));
 
-    // Collect the top distinct OCR hits (area-ranked).
     final seen = <String>{};
     final base = <String>[];
     for (final entry in scored) {
       if (seen.add(entry.char)) base.add(entry.char);
       if (base.length >= 5) break;
     }
-
-    // Expand each base candidate with its component/standalone variant forms.
-    // The original rank order is preserved so the best OCR guess still has
-    // priority in composeFromCandidates().  Any character can be either the
-    // left or right component of a compound, so no side-biasing is applied.
-    return expandWithComponentVariants(base);
-  }
-
-  /// Flattens ML Kit's recognised text into individual CJK characters, each
-  /// tagged with the horizontal centre of its bounding box. Characters within
-  /// a multi-character element are spread evenly across the element's width so
-  /// that, even if two cards are read as one element, their left/right order is
-  /// preserved.
-  List<PositionedGlyph> _extractGlyphs(RecognizedText recognised) {
-    final glyphs = <PositionedGlyph>[];
-    for (final block in recognised.blocks) {
-      for (final line in block.lines) {
-        for (final element in line.elements) {
-          final cjk = _dict.extractChinese(element.text);
-          if (cjk.isEmpty) continue;
-          final box = element.boundingBox;
-          final runes = cjk.runes.toList();
-          for (var i = 0; i < runes.length; i++) {
-            final fraction =
-                runes.length == 1 ? 0.5 : (i + 0.5) / runes.length;
-            glyphs.add(PositionedGlyph(
-              char: String.fromCharCode(runes[i]),
-              xCenter: box.left + fraction * box.width,
-            ));
-          }
-        }
-      }
-    }
-    return glyphs;
+    return base;
   }
 
   Future<void> _toggleTorch() async {
@@ -815,15 +815,37 @@ class _TwoCardFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _CardOutline(label: '左 Left'),
-          SizedBox(width: 28),
-          _CardOutline(label: '右 Right'),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        // Two large, well-separated guide boxes, each filling most of its half
+        // of the frame with a clear gap down the middle. Big, separated cards
+        // give the recogniser large glyphs and an unambiguous gap to split on —
+        // the opposite of small cards bunched near the centre, which was the
+        // main cause of unstable left/right detection.
+        final boxW = w * 0.40;
+        final boxH = h * 0.46;
+        final top = (h - boxH) / 2;
+        return Stack(
+          children: [
+            Positioned(
+              left: w * 0.05,
+              top: top,
+              width: boxW,
+              height: boxH,
+              child: const _CardOutline(label: '左 Left'),
+            ),
+            Positioned(
+              right: w * 0.05,
+              top: top,
+              width: boxW,
+              height: boxH,
+              child: const _CardOutline(label: '右 Right'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -836,14 +858,14 @@ class _CardOutline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 96,
-          height: 132,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.white, width: 2.5),
-            borderRadius: BorderRadius.circular(12),
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.white, width: 2.5),
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
         const SizedBox(height: 8),

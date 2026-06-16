@@ -15,7 +15,10 @@ const _cedictFixture = '''
 ]
 ''';
 
-const _radicalFixture = '{"好":{"l":"女","r":"子"},"明":{"l":"日","r":"月"}}';
+// 江 = ⿰氵工 exercises the component-form case: the decomposition table is
+// keyed on the radical form 氵, not the standalone 水, mirroring the real IDS data.
+const _radicalFixture =
+    '{"好":{"l":"女","r":"子"},"明":{"l":"日","r":"月"},"江":{"l":"氵","r":"工"}}';
 
 const _chineseDefsFixture = '{"好":"优点多的；使人满意的。","我们":"代词。称包括自己在内的若干人。"}';
 
@@ -273,6 +276,109 @@ void main() {
       expect(result.isValid, isFalse);
       expect(result.left.text, '女');
       expect(result.right.text, '女');
+    });
+
+    test('composeFromCandidates expands a standalone read to its component',
+        () {
+      // The card shows 氵 but OCR read the standalone 水; the table is keyed on
+      // 氵, so expansion must recover 氵 + 工 → 江.
+      final result = analyzer.composeFromCandidates(['水'], ['工']);
+      expect(result.combined?.text, '江');
+      expect(result.left.text, '氵'); // the matching component form is surfaced
+      expect(result.right.text, '工');
+    });
+  });
+
+  group('TextAnalyzer.composeByGap', () {
+    late TextAnalyzer analyzer;
+
+    setUp(() {
+      analyzer = TextAnalyzer(
+        dictionary: DictionaryService()..loadFromString(_cedictFixture),
+        radicals: RadicalService()..loadFromString(_radicalFixture),
+        chineseDefinitions: ChineseDefinitionService()
+          ..loadFromString(_chineseDefsFixture),
+      );
+    });
+
+    test('splits two glyphs at the gap and assigns sides by x position', () {
+      // 子 captured on the right (larger x), 女 on the left — spatial order,
+      // not list order, must yield 女 + 子 → 好.
+      final result = analyzer.composeByGap(const [
+        PositionedGlyph(char: '子', xCenter: 480, area: 1000),
+        PositionedGlyph(char: '女', xCenter: 60, area: 1000),
+      ]);
+      expect(result, isNotNull);
+      expect(result!.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('drops a faint speck so it cannot corrupt the left/right split', () {
+      // A tiny stray mark sits far to the right of both cards. Were it kept,
+      // the widest gap would fall between 子 and the speck, grouping 女+子 on
+      // the left and leaving the speck alone on the right — a wrong split.
+      // Filtering specks (< 10% of the max area) restores 女 | 子 → 好.
+      final result = analyzer.composeByGap(const [
+        PositionedGlyph(char: '女', xCenter: 300, area: 1000),
+        PositionedGlyph(char: '子', xCenter: 700, area: 1000),
+        PositionedGlyph(char: '一', xCenter: 1300, area: 5), // speck
+      ]);
+      expect(result, isNotNull);
+      expect(result!.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('ranks the prominent glyph above a same-side stray mark', () {
+      // A stray mark shares the left card's side (close to 女, so it stays in
+      // the left group rather than opening the widest gap) but is large enough
+      // to survive speck filtering. Area ranking must still put the real
+      // component 女 first so 女 + 子 → 好.
+      final result = analyzer.composeByGap(const [
+        PositionedGlyph(char: '一', xCenter: 40, area: 200), // left side, smaller
+        PositionedGlyph(char: '女', xCenter: 120, area: 1000),
+        PositionedGlyph(char: '子', xCenter: 700, area: 1000),
+      ]);
+      expect(result, isNotNull);
+      expect(result!.left.text, '女');
+      expect(result.right.text, '子');
+      expect(result.combined?.text, '好');
+    });
+
+    test('recovers a component form when a card was read as its standalone',
+        () {
+      // Whole-frame OCR read the left card (氵) as the standalone 水. The gap
+      // split assigns it left, expansion recovers 氵, and 氵 + 工 → 江.
+      final result = analyzer.composeByGap(const [
+        PositionedGlyph(char: '水', xCenter: 100, area: 1000),
+        PositionedGlyph(char: '工', xCenter: 600, area: 1000),
+      ]);
+      expect(result, isNotNull);
+      expect(result!.combined?.text, '江');
+      expect(result.left.text, '氵');
+      expect(result.right.text, '工');
+    });
+
+    test('returns null when fewer than two glyphs are present', () {
+      expect(analyzer.composeByGap(const []), isNull);
+      expect(
+        analyzer.composeByGap(
+          const [PositionedGlyph(char: '女', xCenter: 0, area: 1000)],
+        ),
+        isNull,
+      );
+    });
+
+    test('keeps every glyph when areas are unknown (all zero)', () {
+      // Defensive: if bounding-box areas are unavailable, no speck filtering is
+      // applied, but the gap split still assigns sides correctly.
+      final result = analyzer.composeByGap(const [
+        PositionedGlyph(char: '女', xCenter: 0),
+        PositionedGlyph(char: '子', xCenter: 500),
+      ]);
+      expect(result, isNotNull);
+      expect(result!.combined?.text, '好');
     });
   });
 }
